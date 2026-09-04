@@ -1,6 +1,6 @@
 # Neuron-Sink Project Handover
 
-Last updated: 2026-09-05 (Stage C complete; Qwen2.5-1.5B model-negative null)
+Last updated: 2026-09-05 (Stage C2 implemented; runtime preflight passed)
 
 ## 1. Project in one paragraph
 
@@ -20,9 +20,9 @@ Project commit recorded by the Stage B and Stage C runs:
 
 `5bfbf240eacfacfff078f08086f8eb93a0b62c3e`
 
-The Stage B/C implementation, tests, reports, README, and this handover update are currently
-uncommitted. The registered runs record `repo_dirty_at_run=true` and retain the exact dirty-path
-list in provenance. No commit or push has been made.
+The Stage B/C implementation and reports were committed and pushed as `29be3d7`. Stage C2 is
+registered by amendment `A005`; use the current `HEAD` for its implementation commit and run
+provenance.
 
 Two upstream paper codebases are pinned as read-only Git submodules and must not be edited in place:
 
@@ -504,6 +504,7 @@ Important files:
 - `reports/STAGE_C_QWEN_REPLICATION.md` - Stage C Qwen replication and null analysis
 - `configs/frozen/neutral_corpus_manifest.json` - frozen neutral corpus (tracked)
 - `configs/frozen/qwen2_5_1_5b_instruct/neutral_corpus_manifest.json` - Qwen-tokenized neutral corpus
+- `configs/frozen/qwen2_5_1_5b_instruct_c2/neutral_corpus_manifest.json` - fresh C2 Qwen blocks 300-599
 - `configs/frozen/sink_scope.json` - frozen sink-heavy scope (tracked)
 - `configs/frozen/neuron_attribution.csv` - frozen discovery ranking, 30,720 rows (tracked)
 - `configs/frozen/neuron_attribution_metadata.json` - its provenance and per-layer diagnostics
@@ -511,21 +512,25 @@ Important files:
 - `neuron_sink/evaluation.py` - paired neutral metrics, aggregation, and held-out smoke gate
 - `neuron_sink/stage_b.py` - full registered grids, operating-point freeze/unlock, and formal gate
 - `neuron_sink/stage_c.py` - Qwen-specific schema, path, lock, and formal-gate boundary
+- `neuron_sink/stage_c2.py` - C2-specific schema, fresh-corpus checks, lock, and gate boundary
+- `neuron_sink/signed_selection.py` - positive-signed global ranking and target re-verification
 - `neuron_sink/stats.py` - deterministic paired bootstrap, random percentiles, and dose response
 - `scripts/run_suppression_smoke.py` - exact 24/24/24 Task-7 runner
 - `scripts/run_full_phenomenon.py` - Stage B GPT-2 and Stage C Qwen preflight/full runner
 - `tests/test_evaluation.py` - frozen-grid, metric, schema, aggregation, and gate tests
 - `tests/test_stage_b.py`, `tests/test_stats.py` - Stage B boundaries and statistics
 - `tests/test_qwen_stage_c.py` - Qwen adapter, causal hook, and Stage-C boundary tests
+- `tests/test_stage_c2.py` - signed selection, fresh corpus, and Stage-C2 boundary tests
 
-## 8. Immediate next work package: stop at the Stage C null
+## 8. Immediate next work package: complete the registered Stage C2 run
 
-Stage C is complete and the exact registered Qwen checkpoint did not clear its independent causal
-gate. The required next action is to preserve and report that model-negative result. Do not
-implement or run MMLU, ARC-Challenge, CulturalBench, or GSM8K for this checkpoint.
+Stage C remains complete and null. Amendment A005 registers a separate Stage C2 experiment to test
+whether absolute-value ranking selected sink-inhibiting neurons. C2 orders strictly positive
+`mean_signed_attr` values on fresh neutral blocks and changes no other scientific setting.
 
-A different Qwen checkpoint, unit type, attribution method, fraction, or intervention grid would
-be a new experiment and must be registered prospectively. It cannot replace or be folded into the
+The 20-example C2 runtime preflight passed all identity, attention-validity, causal-order,
+fresh-corpus, signed-selection, and state-leakage checks without opening test. Complete the full
+100/100/100 run, then write a separate C2 result report. It cannot replace or be folded into the
 completed Stage C result.
 
 ## 9. Stage B status
@@ -534,13 +539,14 @@ Stage B is formally complete. GPT-2-small and GPT-2-medium both pass the causal 
 support for the registered neuron-level phenomenon. GPT-2-small has `k*=15`; GPT-2-medium has only
 an exploratory `k_max_effect=860` because no effective validation fraction met the CE ceiling.
 
-## 10. What happens after Stage C
+## 10. What happens after Stage C2
 
-1. Preserve the Qwen2.5-1.5B null and its exploratory fallback without retuning.
-2. Do not enter Stage D because the required Qwen causal gate failed.
-3. Any alternate checkpoint or mechanistic extension needs a new registered experiment before
+1. Preserve the Stage C null and its exploratory fallback without retuning.
+2. Evaluate the unchanged gate on C2's locked test split exactly once.
+3. Enter Stage D only if C2 passes; otherwise keep downstream blocked for this checkpoint.
+4. Any further alternate checkpoint or mechanistic extension needs a new registered experiment before
    measurement.
-4. Do not begin later Sink-KD work merely to bypass the failed Stage C-to-D gate.
+5. Do not begin later Sink-KD work merely to bypass a failed Qwen gate.
 
 Never transfer raw neuron ids from GPT-2 to Qwen or teacher to student. Compare normalized depth, sparsity, sink reduction, dose response, and functional drift instead.
 
@@ -626,8 +632,9 @@ On the RTX 4080 SUPER machine, use `F:\neuron-sink\.venv` and the cache path abo
 - Project-level Stage B interpretation: STRONG SUPPORT
 - Qwen2.5-1.5B baseline sink preflight: PASS
 - Qwen2.5-1.5B independent causal replication: NULL / MODEL-NEGATIVE; no `k*`, exploratory `k_max_effect=2330`
-- Downstream task drift: BLOCKED by Stage C gate
+- Qwen2.5-1.5B Stage C2 signed-ranking preflight: PASS; full run pending
+- Downstream task drift: BLOCKED pending Stage C2 gate
 - Sink-KD neuron comparison: NOT STARTED
 
-**Next action: stop at and preserve the registered Stage C null. Do not start downstream tasks for
-this checkpoint. Any alternative checkpoint or method requires a new prospective experiment.**
+**Next action: complete the registered Stage C2 full run, preserve Stage C as a separate null, and
+do not start downstream tasks unless the Stage C2 formal gate passes.**

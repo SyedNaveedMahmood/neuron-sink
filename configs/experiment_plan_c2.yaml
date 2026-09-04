@@ -1,0 +1,78 @@
+version: neuron_sink_stage_c2_signed_v1
+registered_date: 2026-09-05
+amendment: A005
+
+experiment_id: stage_c2_qwen_signed_replication_v1
+relationship_to_stage_c: independent_post_hoc_replication_preserving_stage_c_null
+
+model:
+  id: Qwen/Qwen2.5-1.5B-Instruct
+  alias: qwen2.5-1.5b-instruct
+  revision: 989aa7980e4cf806f80c7fef2b1adb7bc71aa306
+  tokenizer_id: Qwen/Qwen2.5-1.5B-Instruct
+  tokenizer_revision: 989aa7980e4cf806f80c7fef2b1adb7bc71aa306
+  dtype: bfloat16
+  attention_implementation: eager
+
+neutral_corpus:
+  manifest: configs/frozen/qwen2_5_1_5b_instruct_c2/neutral_corpus_manifest.json
+  provider: upstream_sink_kd_openwebtext_corpus
+  dataset_id: Skylion007/openwebtext
+  document_window: validation
+  purpose: ppl
+  block_indices: [300, 599]
+  seed: 0
+  sequence_length: 40
+  partitions:
+    discovery: 100
+    validation: 100
+    test: 100
+  disjoint_from_stage_c_blocks: true
+  downstream_overlap_forbidden: true
+
+sink_metric:
+  target_position: 0
+  query_positions: second_half
+  sink_heavy_layer_rule: top_quartile_and_absolute_floor
+  absolute_floor: 0.15
+  heads: all
+
+neuron_definition:
+  type: mlp_intermediate_pre_output_projection
+  hook: mlp.down_proj.input
+  suppression_positions: all
+
+attribution:
+  quantity: activation_times_gradient
+  objective: causal_order_future_sink
+  aggregation: mean_over_examples_and_tokens
+  selection_score: mean_signed_attr
+  order: descending
+  required_sign: strictly_positive
+  ranking_scope: global_over_eligible_layer_neuron_pairs
+  tie_break: [layer, neuron]
+  invalid_if_positive_count_below_max_k: true
+
+fractions_percent: [0.01, 0.05, 0.10, 0.25, 0.50, 1.00]
+alphas: [1.00, 0.75, 0.50, 0.25, 0.00]
+
+controls:
+  primary: layer_count_matched_random
+  draws: 20
+  base_seed: 0
+  exclude_target_neurons: true
+
+gate:
+  minimum_relative_sink_reduction: 0.10
+  target_must_exceed_random_percentile: 95
+  bootstrap_ci_target_minus_random_lower_gt: 0.0
+  minimum_spearman_dose_response: 0.8
+  require_finite_outputs: true
+
+operating_point:
+  selection_split: validation
+  alpha: 0.0
+  minimum_relative_sink_reduction: 0.10
+  minimum_target_minus_median_random_rsr: 0.10
+  bootstrap_ci_lower_gt: 0.0
+  maximum_delta_ce: 0.10

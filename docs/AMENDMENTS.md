@@ -164,3 +164,74 @@ The Stage-C runner hard-codes and records that exact tokenizer/model revision, e
 tokenizer name and registered manifest hash, and verifies the loaded model's `_commit_hash` before
 measurement. This clarification changes no input IDs, split, model forward, sink value, ranking,
 intervention, statistic, or gate result.
+
+---
+
+## A005 - Stage C2 positive-signed Qwen replication on fresh neutral blocks
+
+- **Date registered:** 2026-09-05
+- **Registered before:** constructing the Stage-C2 corpus or running any Stage-C2 model forward
+- **Status:** active; defines a new experiment and does not supersede the completed Stage-C result
+
+### Motivation and status of the prior result
+
+Stage C is complete and remains a valid model-specific null under its registered absolute
+activation-times-gradient ranking. Post-result analysis found that 18 of its smallest 23-neuron
+target set had negative `mean_signed_attr`. For suppression by `alpha < 1`, the first-order change
+is
+
+`delta S_future ~= -(1 - alpha) * (a * dS_future/da)`.
+
+Negative signed attribution therefore predicts that suppression will *increase* the sink. That is
+the direction observed for the Stage-C 0.01%-0.10% target sets. This observation motivates a new,
+explicitly post-hoc Stage-C2 replication; it does not change, repair, or reinterpret Stage C as a
+pass.
+
+### What changed
+
+Stage C2 changes the discovery selection statistic from descending `mean_abs_attr` to descending
+positive `mean_signed_attr`, with deterministic `(layer, neuron)` tie-breaking. Every registered
+top-k set must contain only neurons whose discovery `mean_signed_attr` is strictly greater than
+zero. If the discovery ranking contains fewer positive-score neurons than the largest registered
+`k`, Stage C2 stops as invalid before validation or test access.
+
+Because the Stage-C validation and test outcomes have already been inspected, Stage C2 uses a new
+Qwen-tokenized neutral manifest at
+`configs/frozen/qwen2_5_1_5b_instruct_c2/neutral_corpus_manifest.json`. It is built by the same pinned
+`upstream/sink-kd/common/corpus_providers.py::openwebtext_corpus` provider from the same OpenWebText
+validation document window, seed 0, and 40-token packing. The provider purpose is `ppl`, which
+selects packed block indices 300-599; Stage C used purpose `sink`, block indices 0-299. Stage C2
+then assigns its own frozen 100/100/100 discovery, validation, and locked-test roles. Here `ppl` is
+only the upstream provider's offset label; the corpus remains neutral text and contains no
+downstream benchmark examples or labels.
+
+The Stage-C2 experiment id is `stage_c2_qwen_signed_replication_v1`. Its outputs use separate
+append-only `results/stage_c2_preflight/` and `results/stage_c2_full/` roots and Stage-C2-specific
+operating-point and formal-gate schemas.
+
+### What did not change
+
+- checkpoint and revision: `Qwen/Qwen2.5-1.5B-Instruct` at
+  `989aa7980e4cf806f80c7fef2b1adb7bc71aa306`;
+- tokenizer/revision, bfloat16 dtype, eager attention, RTX 4080 SUPER full-run role, and batch size
+  1;
+- position-0/second-half-query sink metric and discovery-only sink-heavy-layer rule;
+- the causal-order-aware `S_future(l)` objective, activation-times-gradient calculation,
+  all-position aggregation, and pre-`down_proj` SwiGLU neuron definition;
+- global selection across eligible `(layer, neuron)` pairs; no layer balancing, layer
+  normalization, sign-consistency threshold, or head restriction is introduced;
+- registered fractions, five alpha values, 20 layer-count-matched random controls, control RNG,
+  neutral CE/KL/top-1 metrics, validation operating-point rule, formal held-out gate, bootstrap,
+  and dose-response threshold;
+- downstream benchmark data remain forbidden for discovery or selection, and Stage D remains
+  blocked unless this exact checkpoint clears the independent Stage-C2 formal gate.
+
+### Why this is a valid new test rather than post-hoc gate tuning
+
+The new hypothesis and its failure condition are frozen before any Stage-C2 model result is
+observed. The signed score is selected for a directional causal reason, not because a Stage-C2
+validation cell performed well. Fresh discovery, validation, and test blocks prevent the
+already-inspected Stage-C examples from serving as confirmatory evidence. Keeping all other
+scientific settings unchanged makes Stage C2 a single-factor test of whether direction-blind
+selection caused the Qwen null. A Stage-C2 null remains a null; no additional ranking or layer
+selection change may be made under this experiment id.

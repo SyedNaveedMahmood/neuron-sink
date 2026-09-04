@@ -5,9 +5,10 @@ Research repository for the next-stage attention-sink project: localize sink-ass
 ## Status
 
 **Stages A-C are complete. Stage B passed for both GPT-2 checkpoints, while the independent
-Qwen2.5-1.5B Stage C replication produced a valid model-specific null.** The Qwen baseline sink
-was strong, but no registered neuron fraction passed its held-out causal gate. Under the registered
-ordering, Stage D downstream benchmarks are blocked for this checkpoint.
+Qwen2.5-1.5B Stage C replication produced a valid model-specific null.** Amendment A005 registers
+Stage C2 as a separate positive-signed replication on fresh neutral blocks; its 20-example runtime
+preflight passes. Stage C remains unchanged, and Stage D stays blocked unless C2 passes its own
+locked held-out gate.
 
 | Task | Status |
 |---|---|
@@ -20,6 +21,7 @@ ordering, Stage D downstream benchmarks are blocked for this checkpoint.
 | 7. 24/24/24 suppression smoke experiment and plausibility gate | PASS |
 | Stage B. Full 100/100/100 GPT-2-small and GPT-2-medium confirmation | PASS / PASS |
 | Stage C. Qwen2.5-1.5B independent replication | NULL / MODEL-NEGATIVE |
+| Stage C2. Fresh-corpus positive-signed Qwen replication | PREFLIGHT PASS / FULL RUN PENDING |
 
 Stage B independently recomputed the discovery sink map, future-sink neuron ranking, and 20
 layer-count-matched controls for each checkpoint, selected the operating point from validation
@@ -42,6 +44,12 @@ targeted suppression beat matched random but achieved only 7.07% test RSR, Spear
 Delta CE `1.093`; the formal gate therefore failed. See
 [`reports/STAGE_C_QWEN_REPLICATION.md`](reports/STAGE_C_QWEN_REPLICATION.md).
 
+Stage C2 changes only target ordering: it ranks strictly positive discovery
+`mean_signed_attr` values so suppression has the preregistered first-order direction of reducing
+the sink. It uses OpenWebText blocks 300-599, disjoint from Stage C's blocks 0-299, while retaining
+the same checkpoint, hook, fractions, alphas, controls, metrics, and formal gate. See amendment
+`A005` and [`configs/experiment_plan_c2.yaml`](configs/experiment_plan_c2.yaml).
+
 Development/smoke implementation is registered for the RTX 2060 class (see amendment `A001` in
 [`docs/AMENDMENTS.md`](docs/AMENDMENTS.md)); full runs are registered for an RTX 4080 SUPER.
 
@@ -60,6 +68,7 @@ The main design files are:
 - `docs/06_IMPLEMENTATION_PROMPTS.md`
 - `docs/AMENDMENTS.md`
 - `configs/experiment_plan.yaml`
+- `configs/experiment_plan_c2.yaml`
 - `configs/downstream_tasks.yaml`
 
 ## Upstream codebases
@@ -129,7 +138,6 @@ pip install -r requirements.txt
 
 ## Next implementation milestone
 
-Stage C is closed as a model-negative result. Do not implement or run MMLU, ARC-Challenge,
-CulturalBench, or GSM8K for this Qwen checkpoint. A different checkpoint, unit type, attribution
-method, or intervention grid must be registered prospectively as a new experiment; it must not be
-used to reinterpret or overwrite this null.
+Run the separately registered Stage C2 positive-signed replication and evaluate its unchanged
+formal gate. Do not run MMLU, ARC-Challenge, CulturalBench, or GSM8K for this Qwen checkpoint unless
+C2 passes. C2 must not reinterpret or overwrite the completed Stage C null.

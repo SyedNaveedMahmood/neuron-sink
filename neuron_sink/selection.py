@@ -643,6 +643,9 @@ def build_neuron_sets_document(
     control_draws: int,
     base_seed: int = REGISTERED_BASE_SEED,
     experiment_id: str = "task6_selection",
+    schema: str = SCHEMA_VERSION,
+    selection_method: str = SELECTION_METHOD,
+    ranking_score: str = RANKING_SCORE,
 ) -> dict[str, Any]:
     """Create a stable, hash-bearing discovery selection document.
 
@@ -655,14 +658,14 @@ def build_neuron_sets_document(
     if len(condition_ids) != len(set(condition_ids)):
         raise SelectionError("Condition ids must be unique")
     document: dict[str, Any] = {
-        "schema": SCHEMA_VERSION,
+        "schema": schema,
         "experiment_id": experiment_id,
         "stage": "discovery",
         "model_id": ranking.model_id,
         "model_revision": ranking.model_revision,
         "neuron_definition": "mlp_intermediate_pre_output_projection",
-        "selection_method": SELECTION_METHOD,
-        "ranking_score": RANKING_SCORE,
+        "selection_method": selection_method,
+        "ranking_score": ranking_score,
         "attribution_sha256": ranking.attribution_sha256,
         "corpus_manifest_sha256": ranking.corpus_manifest_sha256,
         "sink_scope_sha256": ranking.sink_scope_sha256,
@@ -720,12 +723,18 @@ def condition_rows(conditions: Sequence[SelectionCondition]) -> list[dict[str, A
     return rows
 
 
-def verify_neuron_sets_document(document: Mapping[str, Any]) -> FrozenNeuronSets:
+def verify_neuron_sets_document(
+    document: Mapping[str, Any],
+    *,
+    expected_schema: str = SCHEMA_VERSION,
+    expected_selection_method: str = SELECTION_METHOD,
+    expected_ranking_score: str = RANKING_SCORE,
+) -> FrozenNeuronSets:
     """Verify a saved Task-6 document and reconstruct every existing ``NeuronSet``."""
 
-    if document.get("schema") != SCHEMA_VERSION:
+    if document.get("schema") != expected_schema:
         raise SelectionError(
-            f"Neuron-set schema {document.get('schema')!r} != {SCHEMA_VERSION!r}"
+            f"Neuron-set schema {document.get('schema')!r} != {expected_schema!r}"
         )
     stored_sha = str(document.get("neuron_sets_sha256", ""))
     recomputed_sha = canonical_sha256(
@@ -736,10 +745,15 @@ def verify_neuron_sets_document(document: Mapping[str, Any]) -> FrozenNeuronSets
             f"Frozen neuron-set hash mismatch: stored {stored_sha} != recomputed "
             f"{recomputed_sha}"
         )
-    if document.get("ranking_score") != RANKING_SCORE:
+    if document.get("selection_method") != expected_selection_method:
+        raise SelectionError(
+            f"Neuron sets use selection method {document.get('selection_method')!r}, "
+            f"expected {expected_selection_method!r}"
+        )
+    if document.get("ranking_score") != expected_ranking_score:
         raise SelectionError(
             f"Neuron sets use ranking score {document.get('ranking_score')!r}, expected "
-            f"{RANKING_SCORE!r}"
+            f"{expected_ranking_score!r}"
         )
     if document.get("rounding_rule") != ROUNDING_RULE:
         raise SelectionError(
@@ -904,11 +918,22 @@ def verify_neuron_sets_document(document: Mapping[str, Any]) -> FrozenNeuronSets
     return FrozenNeuronSets(document=document, neuron_sets=sets)
 
 
-def load_frozen_neuron_sets(path: Path | str) -> FrozenNeuronSets:
+def load_frozen_neuron_sets(
+    path: Path | str,
+    *,
+    expected_schema: str = SCHEMA_VERSION,
+    expected_selection_method: str = SELECTION_METHOD,
+    expected_ranking_score: str = RANKING_SCORE,
+) -> FrozenNeuronSets:
     path = Path(path)
     if not path.is_file():
         raise SelectionError(f"Frozen neuron sets not found: {path}")
     document = read_json(path)
     if not isinstance(document, Mapping):
         raise SelectionError(f"{path} does not contain a JSON object")
-    return verify_neuron_sets_document(document)
+    return verify_neuron_sets_document(
+        document,
+        expected_schema=expected_schema,
+        expected_selection_method=expected_selection_method,
+        expected_ranking_score=expected_ranking_score,
+    )

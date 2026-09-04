@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Run the registered Stage-B GPT-2 or Stage-C Qwen phenomenon experiment.
+"""Run the registered Stage-B, Stage-C, or Stage-C2 phenomenon experiment.
 
 Each invocation handles one checkpoint independently and creates one append-only run
 directory.  A dry-run prefix performs discovery and validation only; it never opens the
@@ -88,6 +88,14 @@ from neuron_sink.selection import (  # noqa: E402
     load_frozen_attribution,
     load_frozen_neuron_sets,
 )
+from neuron_sink.signed_selection import (  # noqa: E402
+    RANKING_SCORE as SIGNED_RANKING_SCORE,
+    SELECTION_METHOD as SIGNED_SELECTION_METHOD,
+    build_signed_neuron_sets_document,
+    build_signed_selection_conditions,
+    load_signed_neuron_sets,
+    positive_score_count,
+)
 from neuron_sink.sink_metrics import (  # noqa: E402
     REGISTERED_QUERY_RULE,
     REGISTERED_SINK_FLOOR,
@@ -121,6 +129,15 @@ from neuron_sink.stage_c import (  # noqa: E402
     stage_c_run_root,
     unlock_test_split as unlock_stage_c_test_split,
 )
+from neuron_sink.stage_c2 import (  # noqa: E402
+    EXPERIMENT_ID as STAGE_C2_EXPERIMENT_ID,
+    build_operating_point_document as build_stage_c2_operating_point,
+    evaluate_formal_gate as evaluate_stage_c2_gate,
+    freeze_operating_point as freeze_stage_c2_operating_point,
+    stage_c2_run_root,
+    unlock_test_split as unlock_stage_c2_test_split,
+    verify_fresh_corpus as verify_stage_c2_fresh_corpus,
+)
 from neuron_sink.suppression import NeuronSet, suppress_neurons  # noqa: E402
 from neuron_sink.upstream_bridge import sink_repro_module  # noqa: E402
 
@@ -135,6 +152,13 @@ QWEN_FROZEN_MANIFEST = (
 )
 QWEN_CORPUS_SHA256 = (
     "e38f7d3e21ef13287228ef5bb661995f0d628f1a61c99475c73ce3649ceb7426"
+)
+QWEN_C2_FROZEN_MANIFEST = (
+    ROOT / "configs" / "frozen" / "qwen2_5_1_5b_instruct_c2" /
+    "neutral_corpus_manifest.json"
+)
+QWEN_C2_CORPUS_SHA256 = (
+    "dc9d6e8494923a6462cbd22882bfe0ccf87435525940315e97bdae858dabe8ab"
 )
 
 
@@ -154,6 +178,8 @@ class ModelSpec:
     expected_layers: int
     expected_width: int
     neuron_hook_point: str
+    selection_method: str
+    ranking_score: str
 
 
 MODEL_SPECS: Mapping[str, ModelSpec] = {
@@ -172,6 +198,8 @@ MODEL_SPECS: Mapping[str, ModelSpec] = {
         expected_layers=12,
         expected_width=3072,
         neuron_hook_point="transformer.h[layer].mlp.c_proj input",
+        selection_method=SELECTION_METHOD,
+        ranking_score=RANKING_SCORE,
     ),
     "gpt2-medium": ModelSpec(
         alias="gpt2-medium",
@@ -188,6 +216,8 @@ MODEL_SPECS: Mapping[str, ModelSpec] = {
         expected_layers=24,
         expected_width=4096,
         neuron_hook_point="transformer.h[layer].mlp.c_proj input",
+        selection_method=SELECTION_METHOD,
+        ranking_score=RANKING_SCORE,
     ),
     "qwen2.5-1.5b-instruct": ModelSpec(
         alias="qwen2.5-1.5b-instruct",
@@ -204,13 +234,33 @@ MODEL_SPECS: Mapping[str, ModelSpec] = {
         expected_layers=28,
         expected_width=8960,
         neuron_hook_point="model.layers[layer].mlp.down_proj input",
+        selection_method=SELECTION_METHOD,
+        ranking_score=RANKING_SCORE,
+    ),
+    "qwen2.5-1.5b-instruct-c2": ModelSpec(
+        alias="qwen2.5-1.5b-instruct",
+        stage="stage_c2",
+        architecture="qwen2",
+        model_id="Qwen/Qwen2.5-1.5B-Instruct",
+        revision="989aa7980e4cf806f80c7fef2b1adb7bc71aa306",
+        tokenizer_id="Qwen/Qwen2.5-1.5B-Instruct",
+        tokenizer_revision="989aa7980e4cf806f80c7fef2b1adb7bc71aa306",
+        dtype="bfloat16",
+        frozen_manifest=QWEN_C2_FROZEN_MANIFEST,
+        corpus_sha256=QWEN_C2_CORPUS_SHA256,
+        experiment_id=STAGE_C2_EXPERIMENT_ID,
+        expected_layers=28,
+        expected_width=8960,
+        neuron_hook_point="model.layers[layer].mlp.down_proj input",
+        selection_method=SIGNED_SELECTION_METHOD,
+        ranking_score=SIGNED_RANKING_SCORE,
     ),
 }
 
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Registered Stage-B GPT-2 or Stage-C Qwen phenomenon experiment."
+        description="Registered Stage-B, Stage-C, or Stage-C2 phenomenon experiment."
     )
     parser.add_argument("--model", choices=tuple(MODEL_SPECS), required=True)
     parser.add_argument(
@@ -269,10 +319,12 @@ def _parse_args() -> argparse.Namespace:
         )
     if args.resume_after_validation and args.output_dir is None:
         parser.error("--resume-after-validation requires the existing --output-dir")
-    if args.baseline_preflight and MODEL_SPECS[args.model].stage != "stage_c":
-        parser.error("--baseline-preflight is registered only for Stage C")
+    if args.baseline_preflight and MODEL_SPECS[args.model].stage not in (
+        "stage_c", "stage_c2"
+    ):
+        parser.error("--baseline-preflight is registered only for Stage C/C2")
     if args.seed != 0:
-        parser.error("Stages B and C have registered seed 0")
+        parser.error("Stages B, C, and C2 have registered seed 0")
     if args.progress_every < 0:
         parser.error("--progress-every must be non-negative")
     return args
@@ -344,6 +396,14 @@ def _stage_api(spec: ModelSpec) -> tuple[Any, Any, Any, Any, Any]:
             unlock_stage_c_test_split,
             evaluate_stage_c_gate,
             stage_c_run_root,
+        )
+    if spec.stage == "stage_c2":
+        return (
+            build_stage_c2_operating_point,
+            freeze_stage_c2_operating_point,
+            unlock_stage_c2_test_split,
+            evaluate_stage_c2_gate,
+            stage_c2_run_root,
         )
     raise AssertionError(f"Unsupported registered stage {spec.stage!r}")
 
@@ -668,26 +728,57 @@ def _select_full_grid(
     output_dir: Path,
     *,
     experiment_id: str,
+    signed: bool,
 ) -> tuple[Any, tuple[FullCondition, ...]]:
-    conditions = build_selection_conditions(
-        ranking,
-        FULL_FRACTIONS_PERCENT,
-        control_draws=FULL_CONTROL_DRAWS,
-        base_seed=REGISTERED_BASE_SEED,
-    )
-    document = build_neuron_sets_document(
-        ranking,
-        conditions,
-        fractions_percent=FULL_FRACTIONS_PERCENT,
-        control_draws=FULL_CONTROL_DRAWS,
-        base_seed=REGISTERED_BASE_SEED,
-        experiment_id=experiment_id,
-    )
+    if signed:
+        conditions = build_signed_selection_conditions(
+            ranking,
+            FULL_FRACTIONS_PERCENT,
+            control_draws=FULL_CONTROL_DRAWS,
+            base_seed=REGISTERED_BASE_SEED,
+        )
+        document = build_signed_neuron_sets_document(
+            ranking,
+            conditions,
+            fractions_percent=FULL_FRACTIONS_PERCENT,
+            control_draws=FULL_CONTROL_DRAWS,
+            base_seed=REGISTERED_BASE_SEED,
+            experiment_id=experiment_id,
+        )
+    else:
+        conditions = build_selection_conditions(
+            ranking,
+            FULL_FRACTIONS_PERCENT,
+            control_draws=FULL_CONTROL_DRAWS,
+            base_seed=REGISTERED_BASE_SEED,
+        )
+        document = build_neuron_sets_document(
+            ranking,
+            conditions,
+            fractions_percent=FULL_FRACTIONS_PERCENT,
+            control_draws=FULL_CONTROL_DRAWS,
+            base_seed=REGISTERED_BASE_SEED,
+            experiment_id=experiment_id,
+        )
     json_path = output_dir / "neuron_sets.json"
     _write_new_json(json_path, document)
     _write_csv(output_dir / "neuron_sets.csv", condition_rows(conditions), CONDITION_ROW_FIELDS)
-    frozen = load_frozen_neuron_sets(json_path)
+    frozen = (
+        load_signed_neuron_sets(json_path, ranking=ranking)
+        if signed
+        else load_frozen_neuron_sets(json_path)
+    )
     return frozen, registered_full_conditions(frozen)
+
+
+def _load_stage_neuron_sets(
+    spec: ModelSpec, path: Path, *, ranking: Any
+) -> Any:
+    """Load and cross-check the stage-specific frozen target-selection method."""
+
+    if spec.stage == "stage_c2":
+        return load_signed_neuron_sets(path, ranking=ranking)
+    return load_frozen_neuron_sets(path)
 
 
 def _row(
@@ -1119,10 +1210,10 @@ def _resume_after_validation(
     attention_tolerance: float,
     causal_tolerance: float,
 ) -> int:
-    """Verify a stopped run and continue only its still-locked Stage-C test phase."""
+    """Verify a stopped run and continue only its still-locked Qwen test phase."""
 
-    if spec.stage != "stage_c":
-        raise RuntimeError("Exact after-validation resume is currently registered for Stage C")
+    if spec.stage not in ("stage_c", "stage_c2"):
+        raise RuntimeError("Exact after-validation resume is registered only for Stage C/C2")
     for relative in ("operating_point.json", "formal_gate.json", "provenance.json", "summary.json"):
         if (output_dir / relative).exists():
             raise FileExistsError(
@@ -1145,6 +1236,8 @@ def _resume_after_validation(
         "examples_per_split": FULL_EXAMPLES_PER_SPLIT,
         "seq_len": corpus.cut_length,
         "batch_size": 1,
+        "selection_method": spec.selection_method,
+        "ranking_score": spec.ranking_score,
     }
     config_mismatches = {
         key: (run_config.get(key), value)
@@ -1165,7 +1258,9 @@ def _resume_after_validation(
         scope=scope,
         expected_corpus_manifest_sha256=corpus.manifest_sha256,
     )
-    frozen_sets = load_frozen_neuron_sets(discovery_dir / "neuron_sets.json")
+    frozen_sets = _load_stage_neuron_sets(
+        spec, discovery_dir / "neuron_sets.json", ranking=ranking
+    )
     conditions = registered_full_conditions(frozen_sets)
     if tuple(run_config.get("condition_ids", ())) != tuple(
         condition.condition_id for condition in conditions
@@ -1246,7 +1341,9 @@ def _resume_after_validation(
     test_items = list(corpus.items_for("test", smoke=False))
     if len(test_items) != FULL_EXAMPLES_PER_SPLIT:
         raise RuntimeError("Locked test split does not contain exactly 100 examples")
-    print("Resume locks verified; opening the Stage-C test split once", flush=True)
+    print(
+        f"Resume locks verified; opening the {spec.stage} test split once", flush=True
+    )
     test_result = _evaluate_split(
         model,
         adapter,
@@ -1310,7 +1407,7 @@ def _resume_after_validation(
         + validation_summary["runtime_seconds"]
     )
     summary = {
-        "stage_c_execution": "COMPLETE_RESUMED_AFTER_VALIDATION",
+        f"{spec.stage}_execution": "COMPLETE_RESUMED_AFTER_VALIDATION",
         "model_alias": spec.alias,
         "model_id": spec.model_id,
         "model_revision": spec.revision,
@@ -1348,7 +1445,7 @@ def _resume_after_validation(
             "peak_memory_reserved_bytes"
         ],
         "resume": {
-            "reason": "runner function-alias NameError after completed validation",
+            "reason": "explicit verified resume after completed validation",
             "test_was_unopened_before_resume": True,
             "existing_artifacts_reused_without_overwrite": True,
             "verified_hash_locks": hash_locks,
@@ -1377,7 +1474,7 @@ def _resume_after_validation(
         "existing_artifacts_reused_without_overwrite": True,
     })
 
-    print("STAGE_C_EXECUTION=COMPLETE_RESUMED_AFTER_VALIDATION", flush=True)
+    print(f"{spec.stage.upper()}_EXECUTION=COMPLETE_RESUMED_AFTER_VALIDATION", flush=True)
     print(f"FORMAL_GATE={gate['status']}", flush=True)
     print("test_split_accessed=True", flush=True)
     print(f"identity_exact={all_identity_pass}", flush=True)
@@ -1424,6 +1521,10 @@ def _run(args: argparse.Namespace, output_dir: Path) -> int:
             "Frozen neutral corpus tokenizer does not match the registered model input"
         )
     verify_disjoint(corpus.splits)
+    fresh_corpus_checks: dict[str, Any] = {}
+    if spec.stage == "stage_c2":
+        stage_c_corpus = NeutralCorpus.load(QWEN_FROZEN_MANIFEST)
+        fresh_corpus_checks = verify_stage_c2_fresh_corpus(corpus, stage_c_corpus)
     discovery_items = list(corpus.items_for("discovery", smoke=False))[:n_examples]
     validation_items = list(corpus.items_for("validation", smoke=False))[:n_examples]
     if len(discovery_items) != n_examples or len(validation_items) != n_examples:
@@ -1540,7 +1641,11 @@ def _run(args: argparse.Namespace, output_dir: Path) -> int:
             "eligible_mlp_layers": list(scope.eligible_mlp_layers),
             "sink_scope_sha256": scope.sink_scope_sha256,
             "manifest_sha256": corpus.manifest_sha256,
-            "checks": {**sink_checks, **adapter_checks},
+            "checks": {
+                **fresh_corpus_checks,
+                **sink_checks,
+                **adapter_checks,
+            },
             "runtime_seconds_total": provenance["runtime_seconds"],
             "peak_memory_allocated_bytes": provenance["peak_memory_allocated_bytes"],
             "peak_memory_reserved_bytes": provenance["peak_memory_reserved_bytes"],
@@ -1616,7 +1721,10 @@ def _run(args: argparse.Namespace, output_dir: Path) -> int:
         progress_every=args.progress_every,
     )
     frozen_sets, conditions = _select_full_grid(
-        ranking, discovery_dir, experiment_id=experiment_id
+        ranking,
+        discovery_dir,
+        experiment_id=experiment_id,
+        signed=spec.stage == "stage_c2",
     )
     for condition in conditions:
         adapter.validate_neuron_set(condition.neuron_set)
@@ -1663,10 +1771,16 @@ def _run(args: argparse.Namespace, output_dir: Path) -> int:
         "neuron_definition": "mlp_intermediate_pre_output_projection",
         "neuron_hook_point": spec.neuron_hook_point,
         "suppression_positions": "all",
-        "selection_method": SELECTION_METHOD,
+        "selection_method": spec.selection_method,
         "attribution_method": ATTRIBUTION_METHOD,
         "attribution_objective": ATTRIBUTION_OBJECTIVE,
-        "ranking_score": RANKING_SCORE,
+        "ranking_score": spec.ranking_score,
+        "ranking_sign_requirement": (
+            "strictly_positive" if spec.stage == "stage_c2" else None
+        ),
+        "positive_signed_score_count": (
+            positive_score_count(ranking) if spec.stage == "stage_c2" else None
+        ),
         "attribution_sha256": ranking.attribution_sha256,
         "neuron_sets_sha256": frozen_sets.document["neuron_sets_sha256"],
         "neuron_sets_file": "discovery/neuron_sets.json",
@@ -1854,6 +1968,7 @@ def _run(args: argparse.Namespace, output_dir: Path) -> int:
         "peak_memory_allocated_bytes": provenance["peak_memory_allocated_bytes"],
         "peak_memory_reserved_bytes": provenance["peak_memory_reserved_bytes"],
         "checks": {
+            **fresh_corpus_checks,
             **sink_checks,
             **attribution_checks,
             "full_condition_grid_pass": len(conditions) == 126,
@@ -1865,6 +1980,12 @@ def _run(args: argparse.Namespace, output_dir: Path) -> int:
             "separate_model_artifact_path_pass": spec.alias in str(output_dir),
             "smoke_artifact_overwrite_prevented": not str(output_dir).startswith(
                 str((ROOT / "configs" / "frozen").resolve())
+            ),
+            "selection_method_is_registered": (
+                frozen_sets.document.get("selection_method")
+                == spec.selection_method
+                and frozen_sets.document.get("ranking_score")
+                == spec.ranking_score
             ),
         },
     }

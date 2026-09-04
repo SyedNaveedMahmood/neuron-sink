@@ -330,11 +330,22 @@ def build_neutral_corpus(
     cut_length: int = REGISTERED_CUT_LENGTH,
     seed: int = REGISTERED_SEED,
     pool_size: int = FULL_SPLIT_SIZE * len(SPLIT_NAMES),
+    purpose: str = str(REGISTERED_SOURCE["purpose"]),
     cache_root: Path | None = None,
     train_documents: int | None = None,
     validation_documents: int | None = None,
 ) -> NeutralCorpus:
-    """Build the registered neutral corpus and freeze its split assignment."""
+    """Build a registered neutral-corpus block window and freeze its split roles.
+
+    ``purpose="sink"`` is the original Stage-B/Stage-C block window. Amendment A005
+    registers ``purpose="ppl"`` for Stage C2 so the same pinned upstream provider selects
+    its guaranteed-disjoint block window. No other provider purpose is accepted here.
+    """
+
+    if purpose not in ("sink", "ppl"):
+        raise CorpusError(
+            f"Unsupported OpenWebText purpose {purpose!r}; expected 'sink' or 'ppl'"
+        )
 
     assert_no_downstream_source(
         REGISTERED_SOURCE["dataset_id"], REGISTERED_SOURCE["corpus_id"]
@@ -346,14 +357,13 @@ def build_neutral_corpus(
         pool_size,
         block_size=cut_length,
         seed=seed,
-        purpose=REGISTERED_SOURCE["purpose"],
+        purpose=purpose,
         train_documents=train_documents,
         validation_documents=validation_documents,
         cache_root=str(cache_root) if cache_root is not None else None,
     )
 
     window = REGISTERED_SOURCE["document_window"]
-    purpose = REGISTERED_SOURCE["purpose"]
     expected_id = f"openwebtext_{window}_{purpose}_{pool_size}"
     if upstream_corpus.corpus_id != expected_id:
         raise CorpusError(
@@ -389,6 +399,8 @@ def build_neutral_corpus(
     )
 
     source = dict(REGISTERED_SOURCE)
+    source["corpus_id"] = expected_id
+    source["purpose"] = purpose
     source["n_blocks"] = pool_size
     source["block_size"] = cut_length
     source["upstream_corpus_id"] = upstream_corpus.corpus_id

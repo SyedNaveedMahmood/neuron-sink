@@ -2,15 +2,17 @@
 """Task 4a: build and freeze the neutral discovery/validation/test corpus.
 
 This is a thin adapter around the read-only pinned upstream implementation. It reuses
-``upstream/sink-kd/common/corpus_providers.py::openwebtext_corpus``, which is the
+``upstream/sink-kd/common/corpus_providers.py::openwebtext_corpus``. The default is the
 registered ``openwebtext_validation_sink_300`` construction named by
-``configs/experiment_plan.yaml``. Nothing about the corpus is reimplemented here; this
+``configs/experiment_plan.yaml``; amendment A005 additionally registers the provider's
+disjoint ``openwebtext_validation_ppl_300`` block window for Stage C2. Nothing about the
+corpus is reimplemented here; this
 script adds only the project's split assignment, anti-leakage checks, and provenance.
 
 The one parameter this project sets away from the Sink-KD default is ``block_size``: 40
 rather than 128, because ``docs/00_MASTER_EXPERIMENT_DESIGN.md`` registers 40 tokens as the
 primary sequence length. ``block_size`` does not enter the upstream corpus id, so the
-corpus is still exactly ``openwebtext_validation_sink_300``.
+corpus identity remains the upstream provider's exact identity.
 
 No model is loaded and no attention is measured here. Neuron attribution is Task 5 and must
 not appear in this stage.
@@ -77,6 +79,15 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--cut-length", type=int, default=REGISTERED_CUT_LENGTH)
     parser.add_argument("--seed", type=int, default=REGISTERED_SEED)
+    parser.add_argument(
+        "--purpose",
+        choices=("sink", "ppl"),
+        default=str(REGISTERED_SOURCE["purpose"]),
+        help=(
+            "Pinned upstream block window. 'sink' is the original experiment; "
+            "amendment A005 registers the disjoint 'ppl' window for Stage C2."
+        ),
+    )
     parser.add_argument("--split-size", type=int, default=FULL_SPLIT_SIZE,
                         help="Examples per discovery/validation/test split (registered: 100).")
     parser.add_argument("--cache-dir", type=Path,
@@ -111,7 +122,7 @@ def main() -> int:
     if unregistered_window and not args.allow_unregistered_window:
         raise SystemExit(
             "--train-documents/--validation-documents change the upstream document window "
-            "and produce a corpus that is NOT openwebtext_validation_sink_300. Pass "
+            "and produce an unregistered OpenWebText corpus. Pass "
             "--allow-unregistered-window to acknowledge this is a dry run."
         )
     freeze = not (args.no_freeze or unregistered_window)
@@ -143,7 +154,8 @@ def main() -> int:
         Path(block_cache).mkdir(parents=True, exist_ok=True)
 
     print(
-        f"Building {REGISTERED_SOURCE['corpus_id']} via upstream openwebtext_corpus: "
+        f"Building openwebtext_{REGISTERED_SOURCE['document_window']}_{args.purpose}_{pool_size} "
+        "via upstream openwebtext_corpus: "
         f"{pool_size} blocks x {args.cut_length} tokens, seed={args.seed}"
     )
     if unregistered_window:
@@ -155,6 +167,7 @@ def main() -> int:
         cut_length=args.cut_length,
         seed=args.seed,
         pool_size=pool_size,
+        purpose=args.purpose,
         cache_root=block_cache,
         train_documents=args.train_documents,
         validation_documents=args.validation_documents,
@@ -202,6 +215,7 @@ def main() -> int:
             cut_length=args.cut_length,
             seed=args.seed,
             pool_size=pool_size,
+            purpose=args.purpose,
             cache_root=block_cache,
             train_documents=args.train_documents,
             validation_documents=args.validation_documents,
@@ -221,7 +235,8 @@ def main() -> int:
             ids_in_range,
             unique_ids_pass,
             repeat_pass is not False,
-            corpus.corpus_id == f"openwebtext_validation_sink_{pool_size}",
+            corpus.corpus_id
+            == f"openwebtext_validation_{args.purpose}_{pool_size}",
         )
     )
 
@@ -242,6 +257,7 @@ def main() -> int:
         "dataset_config": None,
         "dataset_split": REGISTERED_SOURCE["document_window"],
         "corpus_id": corpus.corpus_id,
+        "provider_purpose": args.purpose,
         "manifest_sha256": corpus.manifest_sha256,
         "upstream_manifest_sha256": corpus.upstream_manifest_sha256,
         "seq_len": args.cut_length,
@@ -258,6 +274,7 @@ def main() -> int:
     summary = {
         "task4_corpus": "PASS" if task_pass else "FAIL",
         "corpus_id": corpus.corpus_id,
+        "provider_purpose": args.purpose,
         "manifest_sha256": corpus.manifest_sha256,
         "upstream_manifest_sha256": corpus.upstream_manifest_sha256,
         "pool_size": pool_size,
