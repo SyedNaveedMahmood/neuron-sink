@@ -46,6 +46,11 @@ EXPECTED_SINK_KD_COMMIT = "db114c9c5eb6ffc5de13e444c783408ea7401c62"
 
 if str(UPSTREAM_COMMON) not in sys.path:
     sys.path.insert(0, str(UPSTREAM_COMMON))
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+# Amendment A001: the registered-GPU list lives in one place instead of a literal here.
+from neuron_sink.provenance import require_registered_gpu  # noqa: E402
 
 # Imports below are intentionally from the pinned submodule, not local copies.
 from corpus_providers import frozen_e1_corpus  # noqa: E402
@@ -151,7 +156,7 @@ def main() -> int:
     if args.sample_size <= 0 or args.cut_length < 2 or args.repeat_size <= 0:
         raise ValueError("sample-size and repeat-size must be positive; cut-length >= 2")
     if not torch.cuda.is_available():
-        raise RuntimeError("Task 2 requires the RTX 2060 SUPER to be usable by PyTorch")
+        raise RuntimeError("Task 2 requires a registered dev GPU usable by PyTorch")
 
     output_dir = _prepare_output_dir(args.output_dir or _default_output_dir())
     started_at = _utc_now()
@@ -180,10 +185,7 @@ def main() -> int:
     torch.use_deterministic_algorithms(True)
     torch.backends.cudnn.benchmark = False
 
-    device = torch.device("cuda:0")
-    gpu_name = torch.cuda.get_device_name(device)
-    if "RTX 2060 SUPER" not in gpu_name:
-        raise RuntimeError(f"Expected RTX 2060 SUPER, found {gpu_name!r}")
+    device, gpu_name, _total_vram = require_registered_gpu("dev")
 
     torch.cuda.empty_cache()
     torch.cuda.reset_peak_memory_stats(device)

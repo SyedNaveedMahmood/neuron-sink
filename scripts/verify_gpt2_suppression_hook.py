@@ -14,6 +14,7 @@ import hashlib
 import importlib.metadata
 import json
 import math
+import os
 import platform
 import subprocess
 import sys
@@ -39,6 +40,7 @@ for source_path in (ROOT, UPSTREAM_COMMON):
         sys.path.insert(0, str(source_path))
 
 from neuron_sink import GPT2ModelAdapter, NeuronSet, suppress_neurons  # noqa: E402
+from neuron_sink.provenance import require_registered_gpu  # noqa: E402
 from intervention_analysis_legacy import (  # noqa: E402
     compute_band,
     compute_bos_attention_metric,
@@ -264,7 +266,10 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--cache-dir",
         type=Path,
-        default=Path(r"X:\codex-cache\huggingface\neuron-sink"),
+        default=(Path(os.environ["NEURON_SINK_HF_CACHE"])
+                 if os.environ.get("NEURON_SINK_HF_CACHE") else None),
+        help="Hugging Face cache directory; defaults to $NEURON_SINK_HF_CACHE, else "
+             "the Hugging Face default. Keep it off a low-space system drive.",
     )
     parser.add_argument("--task2-manifest", type=Path, default=None)
     parser.add_argument("--output-dir", type=Path, default=None)
@@ -290,12 +295,8 @@ def main() -> int:
         raise RuntimeError("upstream/sink-repro is modified")
     if _git("status", "--porcelain", cwd=sink_kd_path):
         raise RuntimeError("upstream/sink-kd is modified")
-    if not torch.cuda.is_available():
-        raise RuntimeError("Task 3 requires CUDA on the RTX 2060 SUPER")
-    device = torch.device("cuda:0")
-    gpu_name = torch.cuda.get_device_name(device)
-    if "RTX 2060 SUPER" not in gpu_name:
-        raise RuntimeError(f"Expected RTX 2060 SUPER, found {gpu_name!r}")
+    # Amendment A001: registered dev GPUs are enumerated in neuron_sink.provenance.
+    device, gpu_name, _total_vram = require_registered_gpu("dev")
 
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed_all(args.seed)
@@ -306,12 +307,13 @@ def main() -> int:
 
     manifest_path = _find_task2_manifest(args.task2_manifest)
     fixture_ids, manifest = _manifest_input(manifest_path)
-    print(f"Loading {args.model_id}@{args.revision} from {args.cache_dir}")
+    cache_dir = str(args.cache_dir.resolve()) if args.cache_dir is not None else None
+    print(f"Loading {args.model_id}@{args.revision} from {cache_dir or 'the default HF cache'}")
     model = GPT2LMHeadModel.from_pretrained(
         args.model_id,
         revision=args.revision,
-        cache_dir=str(args.cache_dir.resolve()),
-        local_files_only=True,
+        cache_dir=cache_dir,
+        local_files_only=False,
         attn_implementation="eager",
         dtype=torch.float32,
     ).eval().to(device)

@@ -146,3 +146,49 @@ Rerun command (with cache/temp environment variables directed to `X:`):
 ## TASK2_PARITY
 
 PASS
+
+## Reproduction on amended hardware (RTX 2060, 12 GB)
+
+Amendment `A001` (`docs/AMENDMENTS.md`) registered a second development GPU. Task 2 was re-run
+unchanged on that machine before Task 4 began, to re-establish the Phase-0 parity gate there rather
+than assume it transfers. The original RTX 2060 SUPER result above is untouched.
+
+- Repo commit at re-run: `31f8e56109f8db078d0514bf773294d611a4c0f0`
+- GPU: `NVIDIA GeForce RTX 2060` (12 GB), Windows 11 Pro 10.0.26200
+- Stack: Python 3.12.4, PyTorch 2.10.0+cu128, Transformers 5.3.0, NNsight 0.7.0, datasets 4.8.4
+- Only code change: the hard-coded `"RTX 2060 SUPER"` assertion became
+  `neuron_sink.provenance.require_registered_gpu("dev")`. Scientific logic and the inline
+  provenance writer are unchanged.
+- Ignored run directory: `results/task2_gpt2_sink_parity/run_20260904T103640Z`
+
+Results were **bit-identical** to the RTX 2060 SUPER run:
+
+| Quantity | RTX 2060 SUPER | RTX 2060 (12 GB) |
+|---|---|---|
+| Manifest SHA-256 | `b7caf6b6…78c64` | `b7caf6b6…78c64` |
+| Reproduced sink | `0.5636834649182856` | `0.5636834649182856` |
+| Absolute difference | `4.649182855e-7` | `4.649182855e-7` |
+| Allowed difference | `0.0000663683` | `0.0000663683` |
+| Max attention row-sum error | `4.172325134277344e-7` | `4.172325134277344e-7` |
+| Max causal future attention | `0.0` | `0.0` |
+| Position-0 concentration ratio | `70.14` | `70.14372010721634` |
+| Evaluated examples | 300 | 300 |
+
+All twelve per-layer received-attention values matched the table above to nine decimals. Every
+sanity check passed, the deterministic three-example repeat was exact, and both submodules were
+clean and at their pinned commits before and after.
+
+- Wall time: `95.163` s (cold dataset download; the Task-2 corpus was fetched fresh on this machine)
+- Peak GPU memory allocated: `520,142,848` bytes (`496.05 MiB`)
+- Peak GPU memory reserved: `562,036,736` bytes (`536.00 MiB`)
+
+Rerun command on this machine:
+
+```powershell
+$env:NEURON_SINK_HF_CACHE="D:\.cache\huggingface\neuron-sink"
+.venv\Scripts\python.exe scripts\run_gpt2_sink_parity.py --model-id gpt2 --revision main --sample-size 100 --cut-length 40 --seed 0 --repeat-size 3 --cache-dir D:\.cache\huggingface\neuron-sink
+```
+
+### TASK2_PARITY (amended hardware)
+
+PASS

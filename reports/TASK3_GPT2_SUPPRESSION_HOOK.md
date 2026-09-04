@@ -138,3 +138,51 @@ content was written to the low-space `C:` drive. No upstream file was changed.
 ## TASK3_HOOK
 
 PASS
+
+## Reproduction on amended hardware (RTX 2060, 12 GB)
+
+Amendment `A001` (`docs/AMENDMENTS.md`) registered a second development GPU. The Task-3 audit was
+re-run unchanged on that machine before Task 4 began. The original RTX 2060 SUPER result above is
+untouched.
+
+- Repo commit at re-run: `31f8e56109f8db078d0514bf773294d611a4c0f0`
+- GPU: `NVIDIA GeForce RTX 2060` (12 GB), Windows 11 Pro 10.0.26200
+- Stack: Python 3.12.4, PyTorch 2.10.0+cu128, Transformers 5.3.0, NNsight 0.7.0, datasets 4.8.4
+- Fixture: first 40-token example (`sst2:38619`) of the re-run Task-2 manifest, SHA-256
+  `b7caf6b666b502790542a962b428a0b22dfa2d08bf77f51c383e249e7ce78c64` — the same manifest hash the
+  RTX 2060 SUPER produced
+- Code changes: the `"RTX 2060 SUPER"` assertion became
+  `neuron_sink.provenance.require_registered_gpu("dev")`, and the `--cache-dir` default, which
+  pointed at the nonexistent `X:` drive, now reads `$NEURON_SINK_HF_CACHE`. The hook implementation
+  in `neuron_sink/suppression.py` is unchanged.
+- Ignored run directory: `results/task3_gpt2_suppression_hook/run_20260904T103834Z`
+
+| Quantity | RTX 2060 SUPER | RTX 2060 (12 GB) |
+|---|---|---|
+| Hook tensor shape | `[1, 40, 3072]` | `[1, 40, 3072]` |
+| MLP intermediate width | 3072 | 3072 |
+| `alpha=1` logits equal | True | True |
+| `alpha=1` max logits difference | `0.0` | `0.0` |
+| `alpha=1` max attention difference | `0.0` | `0.0` |
+| `alpha=1` sink difference | `0.0` | `0.0` |
+| `alpha=0` max unselected difference | `0.0` | `0.0` |
+| `alpha=0.5` max scaling error | `0.0` | `0.0` |
+| Baseline before/after logits difference | `0.0` | `0.0` |
+| Hooks removed / parameters unchanged | True / True | True / True |
+| Max attention row-sum error | `2.980232238769531e-7` | `2.980232238769531e-7` |
+| Peak GPU memory allocated | `517,869,568` B | `517,869,568` B |
+| Peak GPU memory reserved | `559,939,584` B | `559,939,584` B |
+
+Peak memory matched to the byte. Wall time was `2.039` s with a warm local cache.
+
+Automated suite on this machine, with the CUDA integration gate enabled
+(`NEURON_SINK_RUN_GPU_INTEGRATION=1`): **16 passed, 0 failed, 0 skipped**, plus 17 subtests — the
+same counts recorded on the RTX 2060 SUPER. The gated integration test was renamed
+`test_real_gpt2_c_proj_input_on_registered_dev_gpu` since it is no longer SUPER-specific.
+
+The Task-3 neuron ids remain arbitrary DEBUG coordinates. They are not sink neurons and must not be
+cited as findings.
+
+### TASK3_HOOK (amended hardware)
+
+PASS

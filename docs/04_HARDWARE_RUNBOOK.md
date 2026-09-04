@@ -2,9 +2,15 @@
 
 ## Machine roles
 
-### RTX 2060 SUPER — implementation machine
+### RTX 2060 class — implementation machine
 
-Assumed VRAM: 8 GB.
+Two GPUs are registered for this role (amendment `A001` in `docs/AMENDMENTS.md`):
+
+- NVIDIA GeForce RTX 2060 SUPER, 8 GB — produced Tasks 1-3;
+- NVIDIA GeForce RTX 2060, 12 GB — produced Task 4 onward.
+
+Assumed VRAM for policy purposes: 8 GB. The 12 GB card's headroom is recorded in provenance and
+must not be spent widening a registered condition.
 
 Use for:
 
@@ -63,9 +69,9 @@ Required defaults:
 
 Suppression evaluation is inference-only and can increase batch size after measured preflight.
 
-## RTX 2060 SUPER smoke sizes
+## RTX 2060 class smoke sizes
 
-Use the exact smoke policy from the master design:
+Use the exact smoke policy from the master design, on either registered dev GPU:
 
 - GPT-2-small;
 - 24 discovery / 24 validation / 24 test examples;

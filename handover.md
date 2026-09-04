@@ -1,6 +1,6 @@
 # Neuron-Sink Project Handover
 
-Last updated: 2026-09-04
+Last updated: 2026-09-04 (Task 4 complete)
 
 ## 1. Project in one paragraph
 
@@ -31,20 +31,32 @@ The upstream submodules are reference implementations. New code belongs in the r
 
 ## 3. Hardware plan
 
-### Development / falsification machine
+### Development / falsification machines
 
-- GPU: NVIDIA GeForce RTX 2060 SUPER
-- VRAM: 8 GB
-- OS used so far: Windows 10
-- Purpose: implementation, unit tests, GPT-2-small parity, hook validation, attribution smoke work, small 24/24/24 falsification run
+Two GPUs are registered for this role. Amendment `A001` in `docs/AMENDMENTS.md` added the
+second; `neuron_sink.provenance.REGISTERED_GPUS["dev"]` is what the code enforces.
 
-Environment used successfully:
+| Machine | GPU | VRAM | OS | Produced |
+|---|---|---|---|---|
+| 1 | NVIDIA GeForce RTX 2060 SUPER | 8 GB | Windows 10 | Tasks 1-3 |
+| 2 | NVIDIA GeForce RTX 2060 | 12 GB | Windows 11 Pro | Task 2/3 reproduction, Task 4 |
 
-`X:\project\neuron-sink\.venv`
+Purpose: implementation, unit tests, GPT-2-small parity, hook validation, attribution smoke
+work, small 24/24/24 falsification run.
+
+The 12 GB card does **not** license a larger smoke experiment. The 8 GB smoke policy is
+retained verbatim on both. Task 4 peaked at ~505 MiB, so headroom is irrelevant so far.
+
+Environments used successfully:
+
+- machine 1: `X:\project\neuron-sink\.venv`
+- machine 2: `D:\0 Repositories\neuron-sink\.venv`, Hugging Face
+  cache at `D:\.cache\huggingface` via `$NEURON_SINK_HF_CACHE` / `$HF_HOME`
+  (`X:` does not exist on machine 2; the old hard-coded cache defaults were replaced)
 
 Verified stack:
 
-- Python 3.12.5
+- Python 3.12.5 (machine 1) / 3.12.4 (machine 2)
 - PyTorch 2.10.0+cu128
 - Transformers 5.3.0
 - NNsight 0.7.0
@@ -189,9 +201,56 @@ Task-3 audit results:
 
 The Task-3 neuron ids were arbitrary DEBUG coordinates only. They are not sink neurons and must not be cited as findings.
 
+### Task 4 - Neutral corpus freeze and GPT-2-small sink map: PASS
+
+Tracked report:
+
+`reports/TASK4_NEUTRAL_CORPUS_AND_SINK_MAP.md`
+
+Runners:
+
+- `scripts/prepare_neutral_corpus.py`
+- `scripts/map_sink_layers.py`
+
+New modules:
+
+- `neuron_sink/provenance.py` - shared provenance, registered-GPU gate, append-only output dirs,
+  canonical hashing
+- `neuron_sink/upstream_bridge.py` - isolated imports of the two pinned `common/` trees
+- `neuron_sink/corpus.py` - frozen neutral corpus, split roles, anti-leakage guards
+- `neuron_sink/sink_metrics.py` - sink map decomposition and the registered sink-heavy rule
+- `tests/test_provenance.py`, `tests/test_corpus.py`, `tests/test_sink_metrics.py`
+
+Corpus:
+
+- registered source `openwebtext_validation_sink_300` from the pinned Sink-KD provider, at
+  `block_size=40` for this project's registered sequence length
+- OpenWebText document window `[400000, 408000)`, disjoint from the Sink-KD training window by
+  construction
+- 300 blocks -> disjoint discovery/validation/test of 100 each; smoke splits are the first 24 of
+  each, so they nest inside the eventual Stage-B splits
+- manifest SHA-256 `c6e077871003e29e12aaaf4c7f24d8e17eb5a1c919a20f3693d069742dd480c7`, reproduced
+  exactly on a rebuild
+
+Sink map, 24 neutral discovery examples, GPT-2-small:
+
+- per-layer sink (zero-indexed 0..11): `0.038521, 0.123772, 0.161033, 0.410571, 0.449738, 0.650954,
+  0.612202, 0.703484, 0.599864, 0.697401, 0.694212, 0.549964`
+- sink-heavy layers `[7, 9, 10]` via the primary top-quartile-and-floor branch, no fallback
+- sink-heavy heads: layer 7 `{2, 10, 11}`, layer 9 `{1, 6, 9}`, layer 10 `{1, 8, 10}`
+- eligible MLP layers `[0..9]`
+- scope SHA-256 `b8b4c623cb50d078b1e62c5a5bece1b24abab48933b45babd0e76856baaf0235`, identical on a
+  repeat run
+- map decomposition vs upstream `compute_bos_attention_metric`: max abs diff `3.01e-8`
+- Hugging Face forward vs upstream manual baseline: max abs metric diff `4.84e-8`
+- peak VRAM ~505 MiB, 18.1 s
+
+The map describes where the sink is measured and constrains which MLP layers Task 5 may attribute.
+No neuron has been ranked or suppressed, so nothing here is causal evidence.
+
 ## 7. Current code surface
 
-The project currently has only the implementation needed through Task 3. Do not prematurely build all future modules.
+The project currently has only the implementation needed through Task 4. Do not prematurely build all future modules.
 
 Important files:
 
@@ -208,47 +267,73 @@ Important files:
 - `configs/experiment_plan.yaml`
 - `configs/downstream_tasks.yaml`
 - `configs/hardware_profiles.yaml`
+- `docs/AMENDMENTS.md` - registered amendments (A001: second dev GPU)
 - `reports/TASK2_GPT2_SINK_PARITY.md`
 - `reports/TASK3_GPT2_SUPPRESSION_HOOK.md`
+- `reports/TASK4_NEUTRAL_CORPUS_AND_SINK_MAP.md`
+- `configs/frozen/neutral_corpus_manifest.json` - frozen neutral corpus (tracked)
+- `configs/frozen/sink_scope.json` - frozen sink-heavy scope (tracked)
 
-## 8. Immediate next task: Task 4 of the RTX 2060 SUPER phase
+## 8. Immediate next task: Task 5 of the RTX 2060 phase
+
+Task 4 is complete; see `reports/TASK4_NEUTRAL_CORPUS_AND_SINK_MAP.md`.
 
 The next task should be kept narrow:
 
-**Freeze the neutral discovery/validation/test corpus and build the GPT-2-small baseline per-layer/per-head sink map.**
+**Rank eligible MLP neurons with the causal-order-aware future-sink activation-times-gradient
+objective, on the discovery split only.**
 
-Do not implement neuron attribution in Task 4.
+Do not implement selection, controls, or any suppression sweep in Task 5.
+
+What Task 4 froze, which Task 5 must consume rather than recompute:
+
+| Artefact | Value / path |
+|---|---|
+| Neutral corpus (tracked) | `configs/frozen/neutral_corpus_manifest.json` |
+| Corpus manifest SHA-256 | `c6e077871003e29e12aaaf4c7f24d8e17eb5a1c919a20f3693d069742dd480c7` |
+| Upstream corpus SHA-256 | `8798eee8511245b16fe939dfa2d67eeb9f199443f11ea7842d1b5394dcf313ec` |
+| Sink scope (tracked) | `configs/frozen/sink_scope.json` |
+| Sink scope SHA-256 | `b8b4c623cb50d078b1e62c5a5bece1b24abab48933b45babd0e76856baaf0235` |
+| Sink-heavy attention layers | `[7, 9, 10]` |
+| Eligible MLP layers | `[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]` |
+| Discovery split (smoke) | first 24 blocks, `blk0`-`blk23` |
 
 Required scientific intent:
 
-1. Build/freeze a neutral sink corpus that does not overlap with downstream benchmark examples.
-2. Prefer the existing Sink-KD `openwebtext_validation_sink_300` construction/manifest semantics if available and usable.
-3. Create disjoint discovery/validation/test roles.
-4. For the 2060 smoke phase, use 24/24/24 examples.
-5. Preserve sequence length 40 for the primary sink phenomenon test.
-6. Measure baseline per-layer/per-head attention received by position 0.
-7. Apply the registered sink-heavy layer rule only after the map is computed.
-8. Save the frozen corpus manifest and sink-scope artifact with hashes so later attribution cannot silently change them.
+1. For each eligible MLP layer `l`, build `S_future(l)` from **only** the frozen sink-heavy layers
+   `j > l`. These targets are already frozen in `sink_scope.json` under `future_sink_layers`; read
+   them, do not re-derive a wider set.
+2. Capture the layer's `mlp.c_proj` input with gradients, backprop once per layer per example, and
+   accumulate `abs(a * grad)` over examples and token positions.
+3. Also save signed means for analysis, but rank by the absolute score.
+4. Process one eligible MLP layer per backward pass, batch size 1, releasing the graph between
+   layers. Task 4 peaked at ~505 MiB, but attribution is the highest-risk memory path in the
+   project.
+5. Read the **discovery split only**. `neuron_sink.corpus.require_discovery_split` already raises on
+   validation or test; call it rather than reimplementing the check.
+6. Emit one row per `(layer, neuron)` with `mean_abs_activation`, `mean_signed_attr`,
+   `mean_abs_attr`, `n_examples`, `n_tokens`, and the future-sink layer list, per
+   `docs/03_IMPLEMENTATION_SPEC.md`.
 
-Registered sink-heavy layer rule:
+A differentiable sink score is still needed and does not exist yet. `neuron_sink.sink_metrics`
+currently computes the map with `.detach()`/NumPy, which is correct for Task 4 but unusable for
+gradients. Task 5 must add a torch-differentiable scorer and check it numerically against
+`sink_scalar_from_map` on fixed attention tensors before trusting any gradient.
 
-- layer sink score in the top quartile of that model's layers; AND
-- layer sink score at least `0.15`
+Attribution is a ranking heuristic, not causal evidence.
 
-If fewer than two layers satisfy both, use the top two layers above `0.15`. If no layer exceeds `0.15`, the checkpoint fails sink preflight.
+## 9. Remaining RTX 2060 task sequence
 
-The map is a prerequisite for attribution because an MLP neuron at layer `l` may only be attributed to sink attention in later layers. Same-layer attention occurs before that layer's MLP and cannot be causally downstream of it.
+The development/falsification phase has seven total tasks. Tasks 1-4 are complete.
 
-## 9. Remaining RTX 2060 SUPER task sequence
-
-The development/falsification phase has seven total tasks. Tasks 1–3 are complete.
-
-- Task 4: neutral corpus freeze + per-layer/per-head sink map
 - Task 5: future-sink activation-times-gradient attribution
 - Task 6: global top-k selection + layer-count-matched random controls
 - Task 7: 24/24/24 end-to-end suppression smoke experiment and plausibility gate
 
-Task 7 is the first real neuron-level scientific gate. At least one targeted non-identity condition must reduce held-out sink more than all five layer-count-matched random controls. If valid implementation remains null on the predefined retry, stop rather than tuning toward a positive result.
+Task 7 is the first real neuron-level scientific gate. At least one targeted non-identity condition
+must reduce held-out sink more than all five layer-count-matched random controls. If valid
+implementation remains null on the predefined retry, stop rather than tuning toward a positive
+result.
 
 ## 10. What happens after the 2060 phase
 
@@ -325,11 +410,12 @@ On the existing Windows development machine, use the repository `.venv` and keep
 ## 14. Status at handover
 
 - Environment/source setup: PASS
-- GPT-2-small sink reproduction: PASS
-- GPT-2 MLP suppression hook: PASS
+- GPT-2-small sink reproduction: PASS (reproduced exactly on both dev machines)
+- GPT-2 MLP suppression hook: PASS (reproduced exactly on both dev machines)
+- Neutral corpus freeze + per-layer/per-head sink map: PASS
 - Neuron attribution: NOT STARTED
 - Targeted-vs-random causal result: NOT STARTED
 - Downstream task drift: NOT STARTED
 - Sink-KD neuron comparison: NOT STARTED
 
-**Next action: Task 4 only — freeze neutral corpus splits and build the GPT-2-small per-layer/per-head sink map on the RTX 2060 SUPER.**
+**Next action: Task 5 only — future-sink activation-times-gradient attribution over the frozen eligible MLP layers `[0..9]`, reading the discovery split only.**

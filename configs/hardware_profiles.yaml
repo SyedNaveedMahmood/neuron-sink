@@ -1,8 +1,12 @@
 profiles:
-  dev_rtx2060_super:
+  dev_rtx2060_family:
     role: implementation_and_smoke
-    gpu: NVIDIA RTX 2060 SUPER
-    vram_gb: 8
+    # Amendment A001 (docs/AMENDMENTS.md) registered a second development GPU. Both are
+    # enforced by neuron_sink.provenance.REGISTERED_GPUS["dev"], which is authoritative.
+    gpu:
+      - NVIDIA GeForce RTX 2060 SUPER   # 8 GB, produced Task 1-3
+      - NVIDIA GeForce RTX 2060         # 12 GB, produced Task 4 onward
+    vram_gb: 8   # smoke policy is sized for the smaller card and is NOT relaxed on the 12 GB one
     primary_models:
       - openai-community/gpt2
     optional_models:
@@ -24,7 +28,9 @@ profiles:
       conditions: [B0, T1]
     note: >-
       Development results are not paper statistics. Do not change scientific definitions
-      to fit 8 GB; reduce batch size and process layers serially instead.
+      to fit 8 GB; reduce batch size and process layers serially instead. The 12 GB card
+      registered by amendment A001 does not license a larger smoke experiment: the
+      examples, fractions, alphas, and control counts above are unchanged on both GPUs.
 
   full_rtx4080_super:
     role: confirmatory_and_benchmark_runs

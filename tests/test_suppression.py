@@ -7,6 +7,7 @@ import torch
 from transformers import GPT2Config, GPT2LMHeadModel
 
 from neuron_sink import GPT2ModelAdapter, ModelStructureError, NeuronSet, suppress_neurons
+from neuron_sink.provenance import require_registered_gpu
 
 
 def tiny_gpt2() -> GPT2LMHeadModel:
@@ -172,18 +173,16 @@ class SuppressionUnitTests(unittest.TestCase):
     "set NEURON_SINK_RUN_GPU_INTEGRATION=1 for the cached GPT-2 CUDA test",
 )
 class GPT2CudaIntegrationTests(unittest.TestCase):
-    def test_real_gpt2_c_proj_input_on_rtx_2060_super(self) -> None:
-        self.assertTrue(torch.cuda.is_available())
-        self.assertIn("RTX 2060 SUPER", torch.cuda.get_device_name(0))
-        cache_dir = os.environ.get(
-            "NEURON_SINK_HF_CACHE", r"X:\codex-cache\huggingface\neuron-sink"
-        )
+    def test_real_gpt2_c_proj_input_on_registered_dev_gpu(self) -> None:
+        # Amendment A001: both registered dev GPUs are accepted, via one shared list.
+        require_registered_gpu("dev")
+        cache_dir = os.environ.get("NEURON_SINK_HF_CACHE") or None
         revision = "607a30d783dfa663caf39e06633721c8d4cfcd7e"
         model = GPT2LMHeadModel.from_pretrained(
             "gpt2",
             revision=revision,
             cache_dir=cache_dir,
-            local_files_only=True,
+            local_files_only=False,
             attn_implementation="eager",
             dtype=torch.float32,
         ).eval().to("cuda:0")

@@ -4,7 +4,22 @@ Research repository for the next-stage attention-sink project: localize sink-ass
 
 ## Status
 
-**Experiment design registered; implementation has not started.** The two prior-paper codebases are pinned as exact upstream submodules, and the new experiment is specified in `docs/` plus machine-readable configs in `configs/`.
+**Stage A (implementation and falsification) is in progress: Tasks 1-4 of 7 complete.** The two
+prior-paper codebases are pinned as exact upstream submodules, and the experiment is specified in
+`docs/` plus machine-readable configs in `configs/`.
+
+| Task | Status |
+|---|---|
+| 1. Environment and source verification | PASS |
+| 2. GPT-2-small sink parity | PASS |
+| 3. GPT-2 MLP suppression hook | PASS |
+| 4. Neutral corpus freeze + per-layer/per-head sink map | PASS |
+| 5. Future-sink activation-times-gradient attribution | not started |
+| 6. Top-k selection + layer-matched random controls | not started |
+| 7. 24/24/24 suppression smoke experiment and plausibility gate | not started |
+
+No causal claim exists yet. Tasks 2-4 establish that the sink reproduces, that the suppression
+machinery is exact, and where the sink is measured. No neuron has been ranked or suppressed.
 
 The execution order is deliberately gated:
 
@@ -13,7 +28,8 @@ The execution order is deliberately gated:
 3. only if that effect is real, evaluate performance drift on MMLU, ARC-Challenge, CulturalBench, and GSM8K;
 4. then compare natural teacher sinks with Sink-KD student sinks.
 
-Development/smoke implementation is registered for an RTX 2060 SUPER; full runs are registered for an RTX 4080 SUPER.
+Development/smoke implementation is registered for the RTX 2060 class (see amendment `A001` in
+[`docs/AMENDMENTS.md`](docs/AMENDMENTS.md)); full runs are registered for an RTX 4080 SUPER.
 
 ## Experiment design
 
@@ -28,6 +44,7 @@ The main design files are:
 - `docs/04_HARDWARE_RUNBOOK.md`
 - `docs/05_METRICS_AND_SCHEMAS.md`
 - `docs/06_IMPLEMENTATION_PROMPTS.md`
+- `docs/AMENDMENTS.md`
 - `configs/experiment_plan.yaml`
 - `configs/downstream_tasks.yaml`
 
@@ -63,7 +80,8 @@ neuron-sink/
 │   └── sink-kd/           # exact pinned submodule for Sink-KD
 ├── docs/                  # registered scientific + implementation design
 ├── experiments/           # new experiment implementation/results structure
-├── configs/               # design + future run configs
+├── configs/               # design + run configs
+│   └── frozen/            # immutable frozen artifacts (corpus manifest, sink scope)
 ├── scripts/               # project-level entry points
 ├── tests/                 # parity and intervention tests
 ├── results/               # generated outputs (ignored except .gitkeep)
@@ -97,4 +115,9 @@ pip install -r requirements.txt
 
 ## Next implementation milestone
 
-Follow `docs/06_IMPLEMENTATION_PROMPTS.md` in order. The first GPU milestone is a GPT-2-small falsification smoke test on the RTX 2060 SUPER; full GPT-2-small/medium confirmation and Qwen/downstream runs are reserved for the RTX 4080 SUPER.
+Task 5: rank eligible MLP neurons with the causal-order-aware future-sink
+activation-times-gradient objective, reading the frozen discovery split only. The frozen inputs it
+must consume are in `configs/frozen/`; see `handover.md` section 8.
+
+Full GPT-2-small/medium confirmation and Qwen/downstream runs remain reserved for the RTX 4080
+SUPER.
