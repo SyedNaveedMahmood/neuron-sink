@@ -4,7 +4,7 @@ Research repository for the next-stage attention-sink project: localize sink-ass
 
 ## Status
 
-**Stage A (implementation and falsification) is in progress: Tasks 1-4 of 7 complete.** The two
+**Stage A (implementation and falsification) is in progress: Tasks 1-5 of 7 complete.** The two
 prior-paper codebases are pinned as exact upstream submodules, and the experiment is specified in
 `docs/` plus machine-readable configs in `configs/`.
 
@@ -14,12 +14,14 @@ prior-paper codebases are pinned as exact upstream submodules, and the experimen
 | 2. GPT-2-small sink parity | PASS |
 | 3. GPT-2 MLP suppression hook | PASS |
 | 4. Neutral corpus freeze + per-layer/per-head sink map | PASS |
-| 5. Future-sink activation-times-gradient attribution | not started |
+| 5. Future-sink activation-times-gradient attribution | PASS |
 | 6. Top-k selection + layer-matched random controls | not started |
 | 7. 24/24/24 suppression smoke experiment and plausibility gate | not started |
 
 No causal claim exists yet. Tasks 2-4 establish that the sink reproduces, that the suppression
-machinery is exact, and where the sink is measured. No neuron has been ranked or suppressed.
+machinery is exact, and where the sink is measured. Task 5 ranks all 30,720 eligible
+`(layer, neuron)` pairs on the discovery split, but attribution is a ranking heuristic: no neuron
+has been selected or suppressed, and nothing so far is causal evidence.
 
 The execution order is deliberately gated:
 
@@ -115,9 +117,10 @@ pip install -r requirements.txt
 
 ## Next implementation milestone
 
-Task 5: rank eligible MLP neurons with the causal-order-aware future-sink
-activation-times-gradient objective, reading the frozen discovery split only. The frozen inputs it
-must consume are in `configs/frozen/`; see `handover.md` section 8.
+Task 6: global top-k selection over the frozen discovery ranking at the registered smoke fractions,
+plus five layer-count-matched random control sets with fixed seeds. The frozen inputs it must
+consume — corpus manifest, sink scope, and the 30,720-row neuron ranking — are in `configs/frozen/`;
+see `handover.md` section 8.
 
 Full GPT-2-small/medium confirmation and Qwen/downstream runs remain reserved for the RTX 4080
 SUPER.

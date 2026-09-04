@@ -1,6 +1,6 @@
 # Neuron-Sink Project Handover
 
-Last updated: 2026-09-04 (Task 4 complete)
+Last updated: 2026-09-04 (Task 5 complete)
 
 ## 1. Project in one paragraph
 
@@ -18,7 +18,7 @@ Repository:
 
 Current project state before this handover commit:
 
-`bfcb0201a7a46a3cad9be04b6ad55de685f15a0e`
+`c97b8204d3d5aca8d80fb8402f29da6874e003fa`
 
 Two upstream paper codebases are pinned as read-only Git submodules and must not be edited in place:
 
@@ -248,6 +248,51 @@ Sink map, 24 neutral discovery examples, GPT-2-small:
 The map describes where the sink is measured and constrains which MLP layers Task 5 may attribute.
 No neuron has been ranked or suppressed, so nothing here is causal evidence.
 
+### Task 5 - Future-sink activation-times-gradient attribution: PASS
+
+Tracked report:
+
+`reports/TASK5_NEURON_ATTRIBUTION.md`
+
+Runner:
+
+- `scripts/rank_neurons.py`
+
+New/changed modules:
+
+- `neuron_sink/attribution.py` - capture, objective, causal-order probe, ranking API
+- `neuron_sink/sink_metrics.py` - added `differentiable_sink_score` and `load_frozen_sink_scope`;
+  the Task-4 functions are unchanged
+- `tests/test_attribution.py`
+
+Objective, exactly as registered:
+
+- `S_future(l)` = sink metric restricted to the frozen sink-heavy attention layers `j > l`
+- `I(l,n) = mean over examples and token positions of | a(l,n) * dS_future(l)/da(l,n) |`
+- `a` is the tensor entering `transformer.h[l].mlp.c_proj`
+- ranking score is `mean_abs_attr`; `mean_signed_attr` is saved and never ranked by
+- token scope is all 40 positions, matching `mean_over_examples_and_tokens` and
+  `suppression_positions: all`
+- discovery split only, 24-example smoke prefix; validation and test raise `LeakageError`
+
+Results:
+
+- 10 eligible MLP layers x 3072 neurons = 30,720 rows
+- differentiable scorer vs the frozen metric and upstream: max abs diff `8.82e-8` (tolerance
+  `7.02e-5`); the scalar actually differentiated vs the frozen metric: `6.31e-8`
+- causal ordering measured, not assumed: for all ten eligible layers the future targets are
+  reachable from `a(l)`, while same-layer and earlier-layer objectives carry no `grad_fn` at all
+- gradients finite and non-zero for all 240 (layer, example) backward passes
+- `S_future(9)` = `0.694212` reproduces Task 4's frozen layer-10 sink exactly; `S_future(0)` =
+  `0.698366` reproduces the mean of the frozen layer-7/9/10 sinks
+- attribution SHA-256 `9a87247bd8925c107da2e860b57cdebc0586f6404e8028b69cacab96ceb8d692`,
+  identical on a repeat run
+- peak VRAM `531.13 MiB`, 26.7 s; the required 4-example preflight passed first, no OOM
+- automated tests: 127 passed, 142 subtests, 0 failed
+
+The ranking is a heuristic. No neuron has been selected or suppressed, so nothing in Task 5 is
+causal evidence.
+
 ## 7. Current code surface
 
 The project currently has only the implementation needed through Task 4. Do not prematurely build all future modules.
@@ -271,62 +316,58 @@ Important files:
 - `reports/TASK2_GPT2_SINK_PARITY.md`
 - `reports/TASK3_GPT2_SUPPRESSION_HOOK.md`
 - `reports/TASK4_NEUTRAL_CORPUS_AND_SINK_MAP.md`
+- `reports/TASK5_NEURON_ATTRIBUTION.md`
 - `configs/frozen/neutral_corpus_manifest.json` - frozen neutral corpus (tracked)
 - `configs/frozen/sink_scope.json` - frozen sink-heavy scope (tracked)
+- `configs/frozen/neuron_attribution.csv` - frozen discovery ranking, 30,720 rows (tracked)
+- `configs/frozen/neuron_attribution_metadata.json` - its provenance and per-layer diagnostics
 
-## 8. Immediate next task: Task 5 of the RTX 2060 phase
+## 8. Immediate next task: Task 6 of the RTX 2060 phase
 
-Task 4 is complete; see `reports/TASK4_NEUTRAL_CORPUS_AND_SINK_MAP.md`.
+Task 5 is complete; see `reports/TASK5_NEURON_ATTRIBUTION.md`.
 
 The next task should be kept narrow:
 
-**Rank eligible MLP neurons with the causal-order-aware future-sink activation-times-gradient
-objective, on the discovery split only.**
+**Global top-k selection over the frozen discovery ranking, plus five layer-count-matched random
+control sets with fixed seeds.**
 
-Do not implement selection, controls, or any suppression sweep in Task 5.
+Do not run any suppression sweep, held-out evaluation, or gate in Task 6. That is Task 7.
 
-What Task 4 froze, which Task 5 must consume rather than recompute:
+What Tasks 4 and 5 froze, which Task 6 must consume rather than recompute:
 
 | Artefact | Value / path |
 |---|---|
 | Neutral corpus (tracked) | `configs/frozen/neutral_corpus_manifest.json` |
 | Corpus manifest SHA-256 | `c6e077871003e29e12aaaf4c7f24d8e17eb5a1c919a20f3693d069742dd480c7` |
-| Upstream corpus SHA-256 | `8798eee8511245b16fe939dfa2d67eeb9f199443f11ea7842d1b5394dcf313ec` |
 | Sink scope (tracked) | `configs/frozen/sink_scope.json` |
 | Sink scope SHA-256 | `b8b4c623cb50d078b1e62c5a5bece1b24abab48933b45babd0e76856baaf0235` |
-| Sink-heavy attention layers | `[7, 9, 10]` |
-| Eligible MLP layers | `[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]` |
-| Discovery split (smoke) | first 24 blocks, `blk0`-`blk23` |
+| Discovery ranking (tracked) | `configs/frozen/neuron_attribution.csv` |
+| Attribution SHA-256 | `9a87247bd8925c107da2e860b57cdebc0586f6404e8028b69cacab96ceb8d692` |
+| Eligible pool | 10 layers x 3072 = 30,720 `(layer, neuron)` pairs |
+| Ranking score | `mean_abs_attr` (never `mean_signed_attr`) |
 
 Required scientific intent:
 
-1. For each eligible MLP layer `l`, build `S_future(l)` from **only** the frozen sink-heavy layers
-   `j > l`. These targets are already frozen in `sink_scope.json` under `future_sink_layers`; read
-   them, do not re-derive a wider set.
-2. Capture the layer's `mlp.c_proj` input with gradients, backprop once per layer per example, and
-   accumulate `abs(a * grad)` over examples and token positions.
-3. Also save signed means for analysis, but rank by the absolute score.
-4. Process one eligible MLP layer per backward pass, batch size 1, releasing the graph between
-   layers. Task 4 peaked at ~505 MiB, but attribution is the highest-risk memory path in the
-   project.
-5. Read the **discovery split only**. `neuron_sink.corpus.require_discovery_split` already raises on
-   validation or test; call it rather than reimplementing the check.
-6. Emit one row per `(layer, neuron)` with `mean_abs_activation`, `mean_signed_attr`,
-   `mean_abs_attr`, `n_examples`, `n_tokens`, and the future-sink layer list, per
-   `docs/03_IMPLEMENTATION_SPEC.md`.
+1. Derive exact `k` for each registered smoke fraction `{0.05%, 0.10%, 0.25%}` of the 30,720
+   eligible neurons, rounding to the nearest positive integer, and record the exact `k`.
+2. Select the global top-`k` by `mean_abs_attr` across eligible `(layer, neuron)` pairs. Retain the
+   per-layer rankings for diagnostics; do not select per layer.
+3. Record per-layer counts of each targeted set. The head of the ranking is depth-skewed - 124 of
+   the top 307 are layer 9 - which is exactly why the primary control is layer-count matched.
+4. Generate five layer-count-matched random control sets per condition with fixed seeds: the same
+   number of neurons in every layer, sampled from that layer's non-targeted neurons. A control set
+   may not contain a targeted neuron for that same condition.
+5. Reruns with the same seed must reproduce the control ids exactly, and the saved neuron-set file
+   must be stable across reruns.
+6. Reuse `neuron_sink.suppression.NeuronSet`; it already validates layer/neuron ids and is what the
+   suppression hook consumes.
 
-A differentiable sink score is still needed and does not exist yet. `neuron_sink.sink_metrics`
-currently computes the map with `.detach()`/NumPy, which is correct for Task 4 but unusable for
-gradients. Task 5 must add a torch-differentiable scorer and check it numerically against
-`sink_scalar_from_map` on fixed attention tensors before trusting any gradient.
-
-Attribution is a ranking heuristic, not causal evidence.
+Task 6 needs no GPU and no model forward. It is selection bookkeeping over a frozen CSV.
 
 ## 9. Remaining RTX 2060 task sequence
 
-The development/falsification phase has seven total tasks. Tasks 1-4 are complete.
+The development/falsification phase has seven total tasks. Tasks 1-5 are complete.
 
-- Task 5: future-sink activation-times-gradient attribution
 - Task 6: global top-k selection + layer-count-matched random controls
 - Task 7: 24/24/24 end-to-end suppression smoke experiment and plausibility gate
 
@@ -413,9 +454,10 @@ On the existing Windows development machine, use the repository `.venv` and keep
 - GPT-2-small sink reproduction: PASS (reproduced exactly on both dev machines)
 - GPT-2 MLP suppression hook: PASS (reproduced exactly on both dev machines)
 - Neutral corpus freeze + per-layer/per-head sink map: PASS
-- Neuron attribution: NOT STARTED
+- Future-sink activation-times-gradient attribution: PASS
+- Neuron selection and matched controls: NOT STARTED
 - Targeted-vs-random causal result: NOT STARTED
 - Downstream task drift: NOT STARTED
 - Sink-KD neuron comparison: NOT STARTED
 
-**Next action: Task 5 only — future-sink activation-times-gradient attribution over the frozen eligible MLP layers `[0..9]`, reading the discovery split only.**
+**Next action: Task 6 only — global top-k selection over the frozen discovery ranking plus five layer-count-matched random control sets with fixed seeds. No suppression run, no gate.**

@@ -1,0 +1,499 @@
+{
+  "attribution_aggregation": "mean_over_examples_and_tokens",
+  "attribution_method": "abs_activation_x_sink_gradient",
+  "attribution_objective": "causal_order_future_sink",
+  "attribution_sha256": "9a87247bd8925c107da2e860b57cdebc0586f6404e8028b69cacab96ceb8d692",
+  "causal_order_probe": [
+    {
+      "earlier_sink_depends": null,
+      "earlier_sink_layers": [],
+      "future_targets": [
+        7,
+        9,
+        10
+      ],
+      "future_targets_depend": true,
+      "mlp_layer": 0,
+      "same_layer_attention": 0,
+      "same_layer_depends": false
+    },
+    {
+      "earlier_sink_depends": null,
+      "earlier_sink_layers": [],
+      "future_targets": [
+        7,
+        9,
+        10
+      ],
+      "future_targets_depend": true,
+      "mlp_layer": 1,
+      "same_layer_attention": 1,
+      "same_layer_depends": false
+    },
+    {
+      "earlier_sink_depends": null,
+      "earlier_sink_layers": [],
+      "future_targets": [
+        7,
+        9,
+        10
+      ],
+      "future_targets_depend": true,
+      "mlp_layer": 2,
+      "same_layer_attention": 2,
+      "same_layer_depends": false
+    },
+    {
+      "earlier_sink_depends": null,
+      "earlier_sink_layers": [],
+      "future_targets": [
+        7,
+        9,
+        10
+      ],
+      "future_targets_depend": true,
+      "mlp_layer": 3,
+      "same_layer_attention": 3,
+      "same_layer_depends": false
+    },
+    {
+      "earlier_sink_depends": null,
+      "earlier_sink_layers": [],
+      "future_targets": [
+        7,
+        9,
+        10
+      ],
+      "future_targets_depend": true,
+      "mlp_layer": 4,
+      "same_layer_attention": 4,
+      "same_layer_depends": false
+    },
+    {
+      "earlier_sink_depends": null,
+      "earlier_sink_layers": [],
+      "future_targets": [
+        7,
+        9,
+        10
+      ],
+      "future_targets_depend": true,
+      "mlp_layer": 5,
+      "same_layer_attention": 5,
+      "same_layer_depends": false
+    },
+    {
+      "earlier_sink_depends": null,
+      "earlier_sink_layers": [],
+      "future_targets": [
+        7,
+        9,
+        10
+      ],
+      "future_targets_depend": true,
+      "mlp_layer": 6,
+      "same_layer_attention": 6,
+      "same_layer_depends": false
+    },
+    {
+      "earlier_sink_depends": false,
+      "earlier_sink_layers": [
+        7
+      ],
+      "future_targets": [
+        9,
+        10
+      ],
+      "future_targets_depend": true,
+      "mlp_layer": 7,
+      "same_layer_attention": 7,
+      "same_layer_depends": false
+    },
+    {
+      "earlier_sink_depends": false,
+      "earlier_sink_layers": [
+        7
+      ],
+      "future_targets": [
+        9,
+        10
+      ],
+      "future_targets_depend": true,
+      "mlp_layer": 8,
+      "same_layer_attention": 8,
+      "same_layer_depends": false
+    },
+    {
+      "earlier_sink_depends": false,
+      "earlier_sink_layers": [
+        7,
+        9
+      ],
+      "future_targets": [
+        10
+      ],
+      "future_targets_depend": true,
+      "mlp_layer": 9,
+      "same_layer_attention": 9,
+      "same_layer_depends": false
+    }
+  ],
+  "corpus_id": "openwebtext_validation_sink_300",
+  "corpus_manifest_sha256": "c6e077871003e29e12aaaf4c7f24d8e17eb5a1c919a20f3693d069742dd480c7",
+  "dtype": "float32",
+  "eligible_mlp_layers": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9
+  ],
+  "example_ids": [
+    "openwebtext:validation:0:blk0",
+    "openwebtext:validation:0:blk1",
+    "openwebtext:validation:0:blk2",
+    "openwebtext:validation:0:blk3",
+    "openwebtext:validation:0:blk4",
+    "openwebtext:validation:0:blk5",
+    "openwebtext:validation:0:blk6",
+    "openwebtext:validation:0:blk7",
+    "openwebtext:validation:0:blk8",
+    "openwebtext:validation:0:blk9",
+    "openwebtext:validation:0:blk10",
+    "openwebtext:validation:0:blk11",
+    "openwebtext:validation:0:blk12",
+    "openwebtext:validation:0:blk13",
+    "openwebtext:validation:0:blk14",
+    "openwebtext:validation:0:blk15",
+    "openwebtext:validation:0:blk16",
+    "openwebtext:validation:0:blk17",
+    "openwebtext:validation:0:blk18",
+    "openwebtext:validation:0:blk19",
+    "openwebtext:validation:0:blk20",
+    "openwebtext:validation:0:blk21",
+    "openwebtext:validation:0:blk22",
+    "openwebtext:validation:0:blk23"
+  ],
+  "experiment_id": "task5_attribution",
+  "future_sink_layers": {
+    "0": [
+      7,
+      9,
+      10
+    ],
+    "1": [
+      7,
+      9,
+      10
+    ],
+    "2": [
+      7,
+      9,
+      10
+    ],
+    "3": [
+      7,
+      9,
+      10
+    ],
+    "4": [
+      7,
+      9,
+      10
+    ],
+    "5": [
+      7,
+      9,
+      10
+    ],
+    "6": [
+      7,
+      9,
+      10
+    ],
+    "7": [
+      9,
+      10
+    ],
+    "8": [
+      9,
+      10
+    ],
+    "9": [
+      10
+    ]
+  },
+  "future_sink_layers_separator": "|",
+  "is_causal_evidence": false,
+  "mlp_width": {
+    "0": 3072,
+    "1": 3072,
+    "2": 3072,
+    "3": 3072,
+    "4": 3072,
+    "5": 3072,
+    "6": 3072,
+    "7": 3072,
+    "8": 3072,
+    "9": 3072
+  },
+  "model_id": "openai-community/gpt2",
+  "model_revision": "607a30d783dfa663caf39e06633721c8d4cfcd7e",
+  "n_examples": 24,
+  "n_rows": 30720,
+  "n_tokens": 960,
+  "neuron_definition": "mlp_intermediate_pre_output_projection",
+  "neuron_hook_point": "transformer.h[layer].mlp.c_proj input",
+  "note": "Attribution is a ranking heuristic, not causal evidence. No neuron here has been shown to cause the sink; that requires held-out suppression against layer-count-matched random controls.",
+  "per_layer": [
+    {
+      "future_sink_layers": [
+        7,
+        9,
+        10
+      ],
+      "layer": 0,
+      "max_abs_gradient": 0.00429423525929451,
+      "mean_abs_attr_max": 0.00017827985968486005,
+      "mean_abs_attr_mean": 9.581569083432202e-06,
+      "mean_abs_attr_median": 8.218618016700371e-06,
+      "mean_sink_future": 0.6983656237522761,
+      "n_examples": 24,
+      "n_tokens": 960,
+      "nonfinite_values": 0,
+      "peak_memory_allocated_bytes": 556922368,
+      "top_neuron": 1115,
+      "top_neuron_mean_abs_attr": 0.00017827985968486005,
+      "top_neuron_mean_signed_attr": -3.715349407921546e-06,
+      "width": 3072,
+      "zero_gradient_examples": 0
+    },
+    {
+      "future_sink_layers": [
+        7,
+        9,
+        10
+      ],
+      "layer": 1,
+      "max_abs_gradient": 0.006470625754445791,
+      "mean_abs_attr_max": 0.00012808195013431408,
+      "mean_abs_attr_mean": 1.066820753580823e-05,
+      "mean_abs_attr_median": 9.40621298717558e-06,
+      "mean_sink_future": 0.6983656237522761,
+      "n_examples": 24,
+      "n_tokens": 960,
+      "nonfinite_values": 0,
+      "peak_memory_allocated_bytes": 556922368,
+      "top_neuron": 342,
+      "top_neuron_mean_abs_attr": 0.00012808195013431408,
+      "top_neuron_mean_signed_attr": 3.7011130284377486e-05,
+      "width": 3072,
+      "zero_gradient_examples": 0
+    },
+    {
+      "future_sink_layers": [
+        7,
+        9,
+        10
+      ],
+      "layer": 2,
+      "max_abs_gradient": 0.011612392961978912,
+      "mean_abs_attr_max": 0.0003312965773634972,
+      "mean_abs_attr_mean": 1.1322895900882e-05,
+      "mean_abs_attr_median": 1.0645576099859351e-05,
+      "mean_sink_future": 0.6983656237522761,
+      "n_examples": 24,
+      "n_tokens": 960,
+      "nonfinite_values": 0,
+      "peak_memory_allocated_bytes": 556922368,
+      "top_neuron": 2015,
+      "top_neuron_mean_abs_attr": 0.0003312965773634972,
+      "top_neuron_mean_signed_attr": 0.00010865010904734055,
+      "width": 3072,
+      "zero_gradient_examples": 0
+    },
+    {
+      "future_sink_layers": [
+        7,
+        9,
+        10
+      ],
+      "layer": 3,
+      "max_abs_gradient": 0.010068723000586033,
+      "mean_abs_attr_max": 0.00019474590584538375,
+      "mean_abs_attr_mean": 1.0642309230716817e-05,
+      "mean_abs_attr_median": 1.007859240998397e-05,
+      "mean_sink_future": 0.6983656237522761,
+      "n_examples": 24,
+      "n_tokens": 960,
+      "nonfinite_values": 0,
+      "peak_memory_allocated_bytes": 556922368,
+      "top_neuron": 2664,
+      "top_neuron_mean_abs_attr": 0.00019474590584538375,
+      "top_neuron_mean_signed_attr": -9.284750663966317e-05,
+      "width": 3072,
+      "zero_gradient_examples": 0
+    },
+    {
+      "future_sink_layers": [
+        7,
+        9,
+        10
+      ],
+      "layer": 4,
+      "max_abs_gradient": 0.005664287135004997,
+      "mean_abs_attr_max": 0.0003759974626272903,
+      "mean_abs_attr_mean": 1.2237923115131186e-05,
+      "mean_abs_attr_median": 1.1112644428595374e-05,
+      "mean_sink_future": 0.6983656237522761,
+      "n_examples": 24,
+      "n_tokens": 960,
+      "nonfinite_values": 0,
+      "peak_memory_allocated_bytes": 556922368,
+      "top_neuron": 787,
+      "top_neuron_mean_abs_attr": 0.0003759974626272903,
+      "top_neuron_mean_signed_attr": -0.0003211839303957631,
+      "width": 3072,
+      "zero_gradient_examples": 0
+    },
+    {
+      "future_sink_layers": [
+        7,
+        9,
+        10
+      ],
+      "layer": 5,
+      "max_abs_gradient": 0.005687014199793339,
+      "mean_abs_attr_max": 0.00041840105770087435,
+      "mean_abs_attr_mean": 1.2433380920197494e-05,
+      "mean_abs_attr_median": 1.1053305671448789e-05,
+      "mean_sink_future": 0.6983656237522761,
+      "n_examples": 24,
+      "n_tokens": 960,
+      "nonfinite_values": 0,
+      "peak_memory_allocated_bytes": 556922368,
+      "top_neuron": 1790,
+      "top_neuron_mean_abs_attr": 0.00041840105770087435,
+      "top_neuron_mean_signed_attr": -0.0004103727672329351,
+      "width": 3072,
+      "zero_gradient_examples": 0
+    },
+    {
+      "future_sink_layers": [
+        7,
+        9,
+        10
+      ],
+      "layer": 6,
+      "max_abs_gradient": 0.005212270654737949,
+      "mean_abs_attr_max": 0.00033259800105969923,
+      "mean_abs_attr_mean": 1.287171337575553e-05,
+      "mean_abs_attr_median": 1.0555993878170762e-05,
+      "mean_sink_future": 0.6983656237522761,
+      "n_examples": 24,
+      "n_tokens": 960,
+      "nonfinite_values": 0,
+      "peak_memory_allocated_bytes": 556922368,
+      "top_neuron": 437,
+      "top_neuron_mean_abs_attr": 0.00033259800105969923,
+      "top_neuron_mean_signed_attr": 0.000283794546120375,
+      "width": 3072,
+      "zero_gradient_examples": 0
+    },
+    {
+      "future_sink_layers": [
+        9,
+        10
+      ],
+      "layer": 7,
+      "max_abs_gradient": 0.0036718370392918587,
+      "mean_abs_attr_max": 0.00047473207743613336,
+      "mean_abs_attr_mean": 1.3677987249222502e-05,
+      "mean_abs_attr_median": 1.200598682127652e-05,
+      "mean_sink_future": 0.6958062797784805,
+      "n_examples": 24,
+      "n_tokens": 960,
+      "nonfinite_values": 0,
+      "peak_memory_allocated_bytes": 556922368,
+      "top_neuron": 2367,
+      "top_neuron_mean_abs_attr": 0.00047473207743613336,
+      "top_neuron_mean_signed_attr": 0.00011991709173245953,
+      "width": 3072,
+      "zero_gradient_examples": 0
+    },
+    {
+      "future_sink_layers": [
+        9,
+        10
+      ],
+      "layer": 8,
+      "max_abs_gradient": 0.00869802013039589,
+      "mean_abs_attr_max": 0.0024660618497359603,
+      "mean_abs_attr_mean": 1.6365112717348103e-05,
+      "mean_abs_attr_median": 1.1359166897696697e-05,
+      "mean_sink_future": 0.6958062797784805,
+      "n_examples": 24,
+      "n_tokens": 960,
+      "nonfinite_values": 0,
+      "peak_memory_allocated_bytes": 556922368,
+      "top_neuron": 1253,
+      "top_neuron_mean_abs_attr": 0.0024660618497359603,
+      "top_neuron_mean_signed_attr": 0.0023811307330888097,
+      "width": 3072,
+      "zero_gradient_examples": 0
+    },
+    {
+      "future_sink_layers": [
+        10
+      ],
+      "layer": 9,
+      "max_abs_gradient": 0.008163130842149258,
+      "mean_abs_attr_max": 0.001223225316627463,
+      "mean_abs_attr_mean": 1.8969456619481335e-05,
+      "mean_abs_attr_median": 1.3547628322218122e-05,
+      "mean_sink_future": 0.6942119225859642,
+      "n_examples": 24,
+      "n_tokens": 960,
+      "nonfinite_values": 0,
+      "peak_memory_allocated_bytes": 556922368,
+      "top_neuron": 840,
+      "top_neuron_mean_abs_attr": 0.001223225316627463,
+      "top_neuron_mean_signed_attr": 0.0008646271254131459,
+      "width": 3072,
+      "zero_gradient_examples": 0
+    }
+  ],
+  "ranking_score": "mean_abs_attr",
+  "row_fields": [
+    "layer",
+    "neuron",
+    "mean_abs_activation",
+    "mean_signed_attr",
+    "mean_abs_attr",
+    "n_examples",
+    "n_tokens",
+    "future_sink_layers",
+    "rank_abs",
+    "rank_abs_in_layer"
+  ],
+  "schema": "neuron_attribution_v1",
+  "seq_len": 40,
+  "sink_heads_used": "all_heads",
+  "sink_layers": [
+    7,
+    9,
+    10
+  ],
+  "sink_query_rule": "second_half",
+  "sink_scope_sha256": "b8b4c623cb50d078b1e62c5a5bece1b24abab48933b45babd0e76856baaf0235",
+  "sink_target_position": 0,
+  "split": "discovery",
+  "split_mode": "smoke_24",
+  "stage": "discovery",
+  "token_position_rule": "all_positions"
+}
