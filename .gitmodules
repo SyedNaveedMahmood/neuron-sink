@@ -1,0 +1,9 @@
+[submodule "upstream/sink-repro"]
+	path = upstream/sink-repro
+	url = https://github.com/AlZubayer/MechanisticAccountofSinks.git
+	branch = main
+
+[submodule "upstream/sink-kd"]
+	path = upstream/sink-kd
+	url = https://github.com/AlZubayer/MechanisticAccountofSinks.git
+	branch = sink-inheritance-foundation
