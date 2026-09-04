@@ -304,6 +304,15 @@ def _parse_args() -> argparse.Namespace:
             "artefacts already verify. Requires --output-dir and never overwrites them."
         ),
     )
+    parser.add_argument(
+        "--resume-after-discovery",
+        action="store_true",
+        help=(
+            "Stage C2 only: resume an interrupted registered run from its verified, "
+            "frozen discovery scope/ranking/neuron sets. Requires --output-dir and "
+            "never overwrites a completed suppression split."
+        ),
+    )
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--progress-every", type=int, default=5)
     args = parser.parse_args()
@@ -311,14 +320,18 @@ def _parse_args() -> argparse.Namespace:
         parser.error(f"--max-examples must be in [20, {FULL_SPLIT_SIZE - 1}]")
     if args.baseline_preflight and args.max_examples is not None:
         parser.error("--baseline-preflight and --max-examples are mutually exclusive")
-    if args.resume_after_validation and (
+    if args.resume_after_validation and args.resume_after_discovery:
+        parser.error("The two resume modes are mutually exclusive")
+    if (args.resume_after_validation or args.resume_after_discovery) and (
         args.baseline_preflight or args.max_examples is not None
     ):
         parser.error(
-            "--resume-after-validation cannot be combined with a preflight option"
+            "A resume mode cannot be combined with a preflight option"
         )
-    if args.resume_after_validation and args.output_dir is None:
-        parser.error("--resume-after-validation requires the existing --output-dir")
+    if (args.resume_after_validation or args.resume_after_discovery) and args.output_dir is None:
+        parser.error("A resume mode requires the existing --output-dir")
+    if args.resume_after_discovery and MODEL_SPECS[args.model].stage != "stage_c2":
+        parser.error("--resume-after-discovery is registered only for Stage C2")
     if args.baseline_preflight and MODEL_SPECS[args.model].stage not in (
         "stage_c", "stage_c2"
     ):
@@ -1193,6 +1206,325 @@ def _verified_completed_split(
     return summary, rows
 
 
+def _resume_after_discovery(
+    *,
+    args: argparse.Namespace,
+    output_dir: Path,
+    model: torch.nn.Module,
+    adapter: MLPModelAdapter,
+    spec: ModelSpec,
+    corpus: NeutralCorpus,
+    discovery_items: Sequence[Any],
+    validation_items: Sequence[Any],
+    device: torch.device,
+    recorder: ProvenanceRecorder,
+    repo_commit: str,
+    repo_status: str,
+    submodule_commits: Mapping[str, str],
+    attention_tolerance: float,
+    causal_tolerance: float,
+) -> int:
+    """Resume Stage C2 from immutable discovery artifacts after a clean interruption."""
+
+    if spec.stage != "stage_c2":
+        raise RuntimeError("After-discovery resume is registered only for Stage C2")
+    for relative in (
+        "operating_point.json",
+        "formal_gate.json",
+        "provenance.json",
+        "summary.json",
+        "resume.json",
+    ):
+        if (output_dir / relative).exists():
+            raise FileExistsError(
+                f"Resume refused because final artefact already exists: {relative}"
+            )
+    for stage in ("discovery", "validation", "test"):
+        suppression_dir = output_dir / stage / "suppression"
+        if suppression_dir.exists() and any(
+            path.is_file() for path in suppression_dir.rglob("*")
+        ):
+            raise FileExistsError(
+                f"Resume refused rather than overwrite a partial/completed {stage} split"
+            )
+
+    run_config = read_json(output_dir / "run_config.json")
+    required_config = {
+        "experiment_id": spec.experiment_id,
+        "registered_run": True,
+        "run_mode": "registered_full_100",
+        "model_id": spec.model_id,
+        "model_revision": spec.revision,
+        "tokenizer_id": spec.tokenizer_id,
+        "tokenizer_revision": spec.tokenizer_revision,
+        "dtype": spec.dtype,
+        "manifest_sha256": corpus.manifest_sha256,
+        "examples_per_split": FULL_EXAMPLES_PER_SPLIT,
+        "seq_len": corpus.cut_length,
+        "batch_size": 1,
+        "selection_method": spec.selection_method,
+        "ranking_score": spec.ranking_score,
+    }
+    config_mismatches = {
+        key: (run_config.get(key), value)
+        for key, value in required_config.items()
+        if run_config.get(key) != value
+    }
+    if config_mismatches:
+        raise RuntimeError(f"Resume run-config lock mismatch: {config_mismatches}")
+
+    discovery_dir = output_dir / "discovery"
+    scope = load_frozen_sink_scope(
+        discovery_dir / "sink_scope.json",
+        expected_corpus_manifest_sha256=corpus.manifest_sha256,
+    )
+    ranking = load_frozen_attribution(
+        discovery_dir / "neuron_attribution.csv",
+        discovery_dir / "neuron_attribution_metadata.json",
+        scope=scope,
+        expected_corpus_manifest_sha256=corpus.manifest_sha256,
+    )
+    frozen_sets = _load_stage_neuron_sets(
+        spec, discovery_dir / "neuron_sets.json", ranking=ranking
+    )
+    conditions = registered_full_conditions(frozen_sets)
+    if tuple(run_config.get("condition_ids", ())) != tuple(
+        condition.condition_id for condition in conditions
+    ):
+        raise RuntimeError("Resume condition order differs from run_config.json")
+    for condition in conditions:
+        adapter.validate_neuron_set(condition.neuron_set)
+
+    hash_locks = {
+        "sink_scope_sha256": scope.sink_scope_sha256,
+        "attribution_sha256": ranking.attribution_sha256,
+        "neuron_sets_sha256": frozen_sets.document["neuron_sets_sha256"],
+    }
+    lock_mismatches = {
+        key: (run_config.get(key), value)
+        for key, value in hash_locks.items()
+        if run_config.get(key) != value
+    }
+    if lock_mismatches:
+        raise RuntimeError(f"Resume discovery hash mismatch: {lock_mismatches}")
+    sink_map = read_json(discovery_dir / "sink_map.json")
+    attribution_metadata = read_json(
+        discovery_dir / "neuron_attribution_metadata.json"
+    )
+    if (
+        sink_map.get("model_id") != spec.model_id
+        or sink_map.get("model_revision") != spec.revision
+        or int(sink_map.get("n_examples", -1)) != FULL_EXAMPLES_PER_SPLIT
+    ):
+        raise RuntimeError("Resume sink-map identity does not reproduce")
+    if attribution_metadata.get("attribution_sha256") != ranking.attribution_sha256:
+        raise RuntimeError("Resume attribution metadata hash does not reproduce")
+
+    reference = None
+    reference_ids = None
+    split_results: dict[str, dict[str, Any]] = {}
+    for stage, items in (
+        ("discovery", discovery_items),
+        ("validation", validation_items),
+    ):
+        print(f"Resume: {stage} full grid from frozen Stage-C2 discovery", flush=True)
+        result = _evaluate_split(
+            model,
+            adapter,
+            spec,
+            items,
+            scope,
+            conditions,
+            output_dir / stage / "suppression",
+            stage=stage,
+            experiment_id=spec.experiment_id,
+            attention_tolerance=attention_tolerance,
+            causal_tolerance=causal_tolerance,
+            progress_every=args.progress_every,
+            reference=reference,
+            reference_ids=reference_ids,
+        )
+        reference = result["reference"]
+        reference_ids = result["reference_ids"]
+        split_results[stage] = result
+
+    (
+        build_operating_point,
+        freeze_operating_point,
+        unlock_test_split,
+        evaluate_formal_gate,
+        _,
+    ) = _stage_api(spec)
+    operating_point = build_operating_point(
+        split_results["validation"]["rows"],
+        conditions,
+        model_id=spec.model_id,
+        model_revision=spec.revision,
+        corpus_manifest_sha256=corpus.manifest_sha256,
+        sink_scope_sha256=scope.sink_scope_sha256,
+        attribution_sha256=ranking.attribution_sha256,
+        neuron_sets_sha256=str(frozen_sets.document["neuron_sets_sha256"]),
+    )
+    operating_point_path = output_dir / "operating_point.json"
+    freeze_operating_point(operating_point_path, operating_point)
+    unlock_test_split(
+        operating_point_path,
+        model_id=spec.model_id,
+        model_revision=spec.revision,
+        corpus_manifest_sha256=corpus.manifest_sha256,
+        sink_scope_sha256=scope.sink_scope_sha256,
+        attribution_sha256=ranking.attribution_sha256,
+        neuron_sets_sha256=str(frozen_sets.document["neuron_sets_sha256"]),
+    )
+    test_items = list(corpus.items_for("test", smoke=False))
+    if len(test_items) != FULL_EXAMPLES_PER_SPLIT:
+        raise RuntimeError("Locked Stage-C2 test split is not exactly 100 examples")
+    print("Validation artifact frozen and verified; opening locked test once", flush=True)
+    test_result = _evaluate_split(
+        model,
+        adapter,
+        spec,
+        test_items,
+        scope,
+        conditions,
+        output_dir / "test" / "suppression",
+        stage="test",
+        experiment_id=spec.experiment_id,
+        attention_tolerance=attention_tolerance,
+        causal_tolerance=causal_tolerance,
+        progress_every=args.progress_every,
+        reference=reference,
+        reference_ids=reference_ids,
+    )
+    split_results["test"] = test_result
+
+    if reference is None or reference_ids is None:
+        raise AssertionError("Resume captured no baseline reference")
+    final_probe = forward_snapshot(
+        model,
+        reference_ids.to(device),
+        sink_layers=scope.sink_layers,
+        attention_tolerance=attention_tolerance,
+        causal_tolerance=causal_tolerance,
+    )
+    state_logits_diff, state_attention_diff = _reference_difference(reference, final_probe)
+    state_leakage_pass = state_logits_diff == 0.0 and state_attention_diff == 0.0
+    del final_probe
+    all_identity_pass = all(
+        bool(result["identity_pass"]) for result in split_results.values()
+    )
+    all_validity_pass = all(
+        bool(result["validity_pass"]) for result in split_results.values()
+    )
+    gate = evaluate_formal_gate(
+        test_result["rows"],
+        conditions,
+        all_identity_pass=all_identity_pass,
+        all_validity_pass=all_validity_pass,
+        state_leakage_pass=state_leakage_pass,
+        registered_run=True,
+    )
+    _write_new_json(output_dir / "formal_gate.json", gate)
+
+    provenance = recorder.finish(
+        repo_commit=repo_commit, submodule_commits=submodule_commits
+    )
+    provenance.update({
+        "repo_dirty_at_run": bool(repo_status),
+        "repo_status_at_run": repo_status.splitlines(),
+        "resume_after_discovery": True,
+        "resumed_output_dir": str(output_dir),
+        "interruption_reason": (
+            "user-requested pause for Stage-C per-layer diagnostic; interrupted "
+            "suppression rows were buffered and no split artifact existed"
+        ),
+    })
+    _write_new_json(output_dir / "provenance.json", provenance)
+    fresh_corpus_checks = verify_stage_c2_fresh_corpus(
+        corpus, NeutralCorpus.load(QWEN_FROZEN_MANIFEST)
+    )
+    split_runtime = {
+        stage: result["runtime_seconds"] for stage, result in split_results.items()
+    }
+    measured_before_resume = float(
+        sink_map.get("runtime_seconds", 0.0)
+        + attribution_metadata.get("runtime_seconds", 0.0)
+    )
+    summary = {
+        "stage_c2_execution": "COMPLETE_RESUMED_AFTER_DISCOVERY",
+        "model_alias": spec.alias,
+        "model_id": spec.model_id,
+        "model_revision": spec.revision,
+        "run_mode": "registered_full_100",
+        "registered_run": True,
+        "formal_gate_status": gate["status"],
+        "formal_gate_pass": gate.get("formal_gate_pass"),
+        "test_split_accessed": True,
+        "n_examples_per_executed_split": FULL_EXAMPLES_PER_SPLIT,
+        "sink_layers": list(scope.sink_layers),
+        "eligible_mlp_layers": list(scope.eligible_mlp_layers),
+        "eligible_pool_size": ranking.pool_size,
+        "condition_count": len(conditions),
+        "alpha_grid": list(FULL_ALPHAS),
+        "forward_count_scientific_grid": sum(
+            int(result["forward_count"]) for result in split_results.values()
+        ),
+        "resume_state_probe_forward_count": 1,
+        "runtime_seconds_by_split": split_runtime,
+        "measured_component_runtime_seconds_before_resume": measured_before_resume,
+        "resume_runtime_seconds": provenance["runtime_seconds"],
+        "runtime_seconds_total_measured_components": (
+            measured_before_resume + provenance["runtime_seconds"]
+        ),
+        "peak_memory_allocated_bytes_resume_process": provenance[
+            "peak_memory_allocated_bytes"
+        ],
+        "peak_memory_reserved_bytes_resume_process": provenance[
+            "peak_memory_reserved_bytes"
+        ],
+        "resume": {
+            "reason": provenance["interruption_reason"],
+            "durable_boundary": "frozen discovery scope, attribution, and neuron sets",
+            "interrupted_suppression_split_restarted_from_example_zero": True,
+            "existing_artifacts_reused_without_overwrite": True,
+            "verified_hash_locks": hash_locks,
+        },
+        "checks": {
+            **fresh_corpus_checks,
+            **dict(sink_map["checks"]),
+            **dict(attribution_metadata["checks"]),
+            "full_condition_grid_pass": len(conditions) == 126,
+            "all_identity_exact_pass": all_identity_pass,
+            "all_forward_validity_pass": all_validity_pass,
+            "state_leakage_pass": state_leakage_pass,
+            "state_leakage_max_logits_abs_diff": state_logits_diff,
+            "state_leakage_max_attention_abs_diff": state_attention_diff,
+            "discovery_hash_locks_reverified": True,
+            "completed_suppression_artifact_overwrite_prevented": True,
+            "operating_point_verified_before_test": True,
+        },
+    }
+    _write_new_json(output_dir / "summary.json", summary)
+    _write_new_json(output_dir / "resume.json", {
+        "status": "COMPLETE",
+        "reason": summary["resume"]["reason"],
+        "durable_boundary": summary["resume"]["durable_boundary"],
+        "test_split_accessed": True,
+        "operating_point_sha256": operating_point["operating_point_sha256"],
+        "formal_gate_sha256": gate["formal_gate_sha256"],
+        "existing_artifacts_reused_without_overwrite": True,
+    })
+
+    print("STAGE_C2_EXECUTION=COMPLETE_RESUMED_AFTER_DISCOVERY", flush=True)
+    print(f"FORMAL_GATE={gate['status']}", flush=True)
+    print("test_split_accessed=True", flush=True)
+    print(f"identity_exact={all_identity_pass}", flush=True)
+    print(f"validity_pass={all_validity_pass}", flush=True)
+    print(f"state_leakage_pass={state_leakage_pass}", flush=True)
+    print(f"output_dir={output_dir}", flush=True)
+    return 0
+
+
 def _resume_after_validation(
     *,
     args: argparse.Namespace,
@@ -1570,6 +1902,26 @@ def _run(args: argparse.Namespace, output_dir: Path) -> int:
         for layer in range(adapter.num_layers)
     ):
         raise AssertionError(f"{spec.alias} MLP width differs from {spec.expected_width}")
+
+    if args.resume_after_discovery:
+        model.requires_grad_(False)
+        return _resume_after_discovery(
+            args=args,
+            output_dir=output_dir,
+            model=model,
+            adapter=adapter,
+            spec=spec,
+            corpus=corpus,
+            discovery_items=discovery_items,
+            validation_items=validation_items,
+            device=device,
+            recorder=recorder,
+            repo_commit=repo_commit,
+            repo_status=repo_status,
+            submodule_commits=submodule_commits,
+            attention_tolerance=attention_tolerance,
+            causal_tolerance=causal_tolerance,
+        )
 
     if args.resume_after_validation:
         model.requires_grad_(False)
@@ -2032,7 +2384,7 @@ def main() -> int:
     args = _parse_args()
     spec = MODEL_SPECS[args.model]
     stage_run_root = _stage_api(spec)[4]
-    if args.resume_after_validation:
+    if args.resume_after_validation or args.resume_after_discovery:
         output_dir = args.output_dir.resolve()
         if not output_dir.is_dir():
             raise FileNotFoundError(f"Resume output directory does not exist: {output_dir}")

@@ -235,3 +235,51 @@ already-inspected Stage-C examples from serving as confirmatory evidence. Keepin
 scientific settings unchanged makes Stage C2 a single-factor test of whether direction-blind
 selection caused the Qwen null. A Stage-C2 null remains a null; no additional ranking or layer
 selection change may be made under this experiment id.
+
+---
+
+## A006 - Descriptive per-layer decomposition of the completed Stage-C result
+
+- **Date registered:** 2026-09-05
+- **Registered before:** running any new model forward for this diagnostic
+- **Status:** post-hoc descriptive diagnostic; it cannot change a gate or operating point
+
+### Motivation and inferential status
+
+The completed Stage-C files report the registered sink score averaged over attention layers
+4, 6, 14, 23, 24, 25, and 26. They do not retain intervened scores for each layer separately.
+Because the Stage-C validation and test results have already been inspected, a per-layer
+decomposition run is explicitly post-hoc. Its purpose is to locate the already-observed aggregate
+effect, not to provide new confirmatory evidence, select a neuron set, tune alpha, or alter the
+Stage-C null. It also cannot alter the independently registered Stage-C2 experiment.
+
+### Frozen diagnostic protocol
+
+The diagnostic reuses, without reranking, the completed Stage-C run's exact checkpoint/revision,
+bfloat16/eager forward semantics, frozen neutral-corpus test examples, sink scope, absolute-score
+attribution artifact, targeted neuron sets, and five registered alpha values. For each test
+example it performs one baseline forward and one forward for every targeted set/alpha pair. It
+records the position-0/second-half-query/all-head sink score independently for every frozen sink
+layer, then reports
+
+`RSR_layer = 1 - mean(S_intervened,layer) / mean(S_baseline,layer)`.
+
+The 20 matched random draws remain frozen and are referenced by hash and selection metadata, but
+are not rerun: the completed Stage-C gate already compared targeted and random suppression, while
+this diagnostic asks only where the targeted aggregate effect occurred. Alpha 1 remains an exact
+identity check, hook state is checked after every intervention, and a final reference forward
+checks state leakage. Outputs live under the separate append-only
+`results/stage_c_posthoc_per_layer/` root with complete provenance.
+
+### Arithmetic check available without a model forward
+
+For every selected set and alpha, the diagnostic also records the first-order aggregate
+prediction from the frozen discovery attribution:
+
+`predicted delta S = -(1 - alpha) * L * sum_i(mean_signed_attr_i * |future(i)| / |sink_layers|)`,
+
+where `L=40` is the registered sequence length. The length factor reverses the discovery
+implementation's mean over token positions; the future-layer fraction converts each neuron's
+causal future-sink objective to the registered all-sink-layer average. This check predicts only
+the aggregate change: the saved attribution averaged a source layer's future attention targets,
+so it cannot identify individual downstream attention-layer contributions.
