@@ -1,0 +1,57 @@
+profiles:
+  dev_rtx2060_super:
+    role: implementation_and_smoke
+    gpu: NVIDIA RTX 2060 SUPER
+    vram_gb: 8
+    primary_models:
+      - openai-community/gpt2
+    optional_models:
+      - Qwen/Qwen2.5-0.5B-Instruct
+    attribution:
+      batch_size: 1
+      layerwise_backward: true
+      retain_all_layer_graphs: false
+    phenomenon_smoke:
+      discovery_examples: 24
+      validation_examples: 24
+      test_examples: 24
+      sequence_length: 40
+      neuron_fractions_percent: [0.05, 0.10, 0.25]
+      alpha: [1.0, 0.5, 0.0]
+      matched_random_draws: 5
+    benchmark_adapter_smoke:
+      examples_per_task: 20
+      conditions: [B0, T1]
+    note: >-
+      Development results are not paper statistics. Do not change scientific definitions
+      to fit 8 GB; reduce batch size and process layers serially instead.
+
+  full_rtx4080_super:
+    role: confirmatory_and_benchmark_runs
+    gpu: NVIDIA RTX 4080 SUPER
+    vram_gb: 16
+    mechanism_models:
+      - openai-community/gpt2
+      - openai-community/gpt2-medium
+    task_model:
+      - Qwen/Qwen2.5-1.5B-Instruct
+    gpt2_dtype: float32
+    qwen_dtype: bfloat16
+    phenomenon_full:
+      discovery_examples: 100
+      validation_examples: 100
+      test_examples: 100
+      sequence_length: 40
+      neuron_fractions_percent: [0.01, 0.05, 0.10, 0.25, 0.50, 1.00]
+      alpha: [1.00, 0.75, 0.50, 0.25, 0.00]
+      matched_random_draws: 20
+    downstream_conditions: [B0, T1, T2, R1]
+    downstream_tasks:
+      - mmlu
+      - arc_challenge
+      - culturalbench_easy
+      - culturalbench_hard
+      - gsm8k
+    note: >-
+      Run full downstream tasks only after the exact task checkpoint independently passes
+      the neutral-corpus sink and targeted-neuron causal gates.
