@@ -4,7 +4,7 @@ Research repository for the next-stage attention-sink project: localize sink-ass
 
 ## Status
 
-**Stage A (implementation and falsification) is in progress: Tasks 1-5 of 7 complete.** The two
+**Stage A (implementation and falsification) is complete: Tasks 1-7 PASS.** The two
 prior-paper codebases are pinned as exact upstream submodules, and the experiment is specified in
 `docs/` plus machine-readable configs in `configs/`.
 
@@ -15,13 +15,19 @@ prior-paper codebases are pinned as exact upstream submodules, and the experimen
 | 3. GPT-2 MLP suppression hook | PASS |
 | 4. Neutral corpus freeze + per-layer/per-head sink map | PASS |
 | 5. Future-sink activation-times-gradient attribution | PASS |
-| 6. Top-k selection + layer-matched random controls | not started |
-| 7. 24/24/24 suppression smoke experiment and plausibility gate | not started |
+| 6. Top-k selection + layer-matched random controls | PASS |
+| 7. 24/24/24 suppression smoke experiment and plausibility gate | PASS |
 
-No causal claim exists yet. Tasks 2-4 establish that the sink reproduces, that the suppression
-machinery is exact, and where the sink is measured. Task 5 ranks all 30,720 eligible
-`(layer, neuron)` pairs on the discovery split, but attribution is a ranking heuristic: no neuron
-has been selected or suppressed, and nothing so far is causal evidence.
+Task 7 supplied the first held-out causal evidence at smoke scale. On the locked 24-example test
+split, all six targeted non-identity cells beat every one of their five layer-count-matched random
+controls, all three targeted sets passed the registered dose direction, and identity/validity/state
+leakage checks passed. The strongest smoke sink reduction was 14.97%; the smallest `k=15` set
+reduced the sink by 12.92% under full suppression. See
+[`reports/TASK7_GPT2_SUPPRESSION_SMOKE.md`](reports/TASK7_GPT2_SUPPRESSION_SMOKE.md).
+
+This is a permissive plausibility result, not the formal phenomenon confirmation. The full
+100/100/100, 20-control GPT-2-small/medium experiment remains required before a model-level causal
+claim or downstream work.
 
 The execution order is deliberately gated:
 
@@ -117,10 +123,7 @@ pip install -r requirements.txt
 
 ## Next implementation milestone
 
-Task 6: global top-k selection over the frozen discovery ranking at the registered smoke fractions,
-plus five layer-count-matched random control sets with fixed seeds. The frozen inputs it must
-consume — corpus manifest, sink scope, and the 30,720-row neuron ranking — are in `configs/frozen/`;
-see `handover.md` section 8.
-
-Full GPT-2-small/medium confirmation and Qwen/downstream runs remain reserved for the RTX 4080
-SUPER.
+Move to the registered RTX 4080 SUPER and implement Prompt 7: generalize the exact smoke pipeline
+to the full 100/100/100 GPT-2-small/medium phenomenon experiment, all registered fractions and
+alphas, 20 matched controls, validation-only `k*` selection, and one locked final test pass. Qwen
+and downstream experiments remain gated until the corresponding phenomenon requirements pass.

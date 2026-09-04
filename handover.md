@@ -1,6 +1,6 @@
 # Neuron-Sink Project Handover
 
-Last updated: 2026-09-04 (Task 5 complete)
+Last updated: 2026-09-04 (Task 7 complete; Stage A smoke gate PASS)
 
 ## 1. Project in one paragraph
 
@@ -18,7 +18,7 @@ Repository:
 
 Current project state before this handover commit:
 
-`c97b8204d3d5aca8d80fb8402f29da6874e003fa`
+`e1d20e4228ae8428996215648197b0aa004f188a`
 
 Two upstream paper codebases are pinned as read-only Git submodules and must not be edited in place:
 
@@ -39,7 +39,7 @@ second; `neuron_sink.provenance.REGISTERED_GPUS["dev"]` is what the code enforce
 | Machine | GPU | VRAM | OS | Produced |
 |---|---|---|---|---|
 | 1 | NVIDIA GeForce RTX 2060 SUPER | 8 GB | Windows 10 | Tasks 1-3 |
-| 2 | NVIDIA GeForce RTX 2060 | 12 GB | Windows 11 Pro | Task 2/3 reproduction, Task 4 |
+| 2 | NVIDIA GeForce RTX 2060 | 12 GB | Windows 11 Pro | Task 2/3 reproduction, Tasks 4-7 |
 
 Purpose: implementation, unit tests, GPT-2-small parity, hook validation, attribution smoke
 work, small 24/24/24 falsification run.
@@ -293,9 +293,86 @@ Results:
 The ranking is a heuristic. No neuron has been selected or suppressed, so nothing in Task 5 is
 causal evidence.
 
+### Task 6 - Global top-k selection and layer-count-matched controls: PASS
+
+Tracked report:
+
+`reports/TASK6_NEURON_SELECTION.md`
+
+Runner and implementation:
+
+- `scripts/select_neurons.py`
+- `neuron_sink/selection.py`
+- `tests/test_selection.py`
+
+Implemented exactly as registered:
+
+- reloaded all 30,720 Task-5 CSV rows with their original integer/float/string types and
+  reproduced attribution SHA-256 `9a87247bd8925c107da2e860b57cdebc0586f6404e8028b69cacab96ceb8d692`
+- explicit rounding rule: Decimal `ROUND_HALF_UP` on pool x percentage / 100, minimum 1
+- all-six-fraction k check: 3, 15, 31, 77, 154, 307
+- froze only smoke top-k sets: 0.05% -> 15, 0.10% -> 31, 0.25% -> 77
+- global selection by Task-5 `rank_abs` / `mean_abs_attr`, never per layer or by signed score
+- five layer-count-matched random controls per target, sampled without replacement from that
+  layer's non-target ids
+- composite RNG seed `np.random.default_rng([base_seed, draw_index, k])`, base seed 0; saved
+  `control_seed` is the draw index 0..4
+- zero-count layers are present in diagnostic count maps and omitted from `NeuronSet.by_layer`
+- the same API generated 20 controls twice for all six fractions and reproduced them exactly
+
+Frozen output:
+
+- `configs/frozen/neuron_sets.json`
+- 18 conditions: 3 targeted + 15 layer-random
+- neuron-set SHA-256 `4fa22a2c68c8c3e56ed13b4f1c481b7b43d963b0190a619cacdc7c03c2672165`
+- flat run-local table has 738 `(condition, layer, neuron)` rows
+- runtime ~0.92 s on CPU; peak GPU memory 0
+- automated suite: 157 passed, 155 subtests, 0 failed, 0 skipped with GPU integration enabled
+
+Every control preserves its target's exact per-layer histogram and excludes that target's ids.
+The frozen file round-trips through the existing immutable `NeuronSet` and regenerates every
+control from its recorded composite seed. No model, corpus split, suppression, held-out metric, or
+benchmark was run. These are intervention candidates, not causal neurons.
+
+### Task 7 - GPT-2-small 24/24/24 suppression smoke: PASS
+
+Tracked report:
+
+`reports/TASK7_GPT2_SUPPRESSION_SMOKE.md`
+
+Runner and implementation:
+
+- `scripts/run_suppression_smoke.py`
+- `neuron_sink/evaluation.py`
+- `tests/test_evaluation.py`
+
+Registered run:
+
+`results/task7_gpt2_smoke/run_20260904T122521Z`
+
+Results on the locked 24-example test split:
+
+- baseline sink `0.718978450`
+- all six targeted non-identity cells beat all five matching layer-random controls
+- target RSR at alpha 0.5 / 0.0:
+  - k=15: `0.058025` / `0.129197`
+  - k=31: `0.042501` / `0.094772`
+  - k=77: `0.056175` / `0.149656`
+- all three targeted sets satisfy `RSR(alpha=1) <= RSR(alpha=0.5) <= RSR(alpha=0)`
+- alpha=1 logits and attention were exact across every identity row
+- finite/nondegenerate logits and finite, normalized, causal attention: PASS
+- final baseline replay found no hook/state leakage
+- 3,960 paired rows, 3,961 forwards including the final leakage probe
+- runtime `77.165` s; peak allocated VRAM `539.69 MiB`
+- automated project-local suite before the run: 167 passed, 155 subtests, 0 failed/skipped
+
+This is held-out causal evidence at the deliberately permissive smoke scale. It clears Stage A and
+justifies the registered RTX 4080 SUPER confirmation. It is not the formal 100-example/20-control
+gate, does not select `k*`, and does not authorize Qwen or downstream benchmark runs.
+
 ## 7. Current code surface
 
-The project currently has only the implementation needed through Task 4. Do not prematurely build all future modules.
+The project currently has only the implementation needed through Task 7. Do not prematurely build all future modules.
 
 Important files:
 
@@ -317,64 +394,36 @@ Important files:
 - `reports/TASK3_GPT2_SUPPRESSION_HOOK.md`
 - `reports/TASK4_NEUTRAL_CORPUS_AND_SINK_MAP.md`
 - `reports/TASK5_NEURON_ATTRIBUTION.md`
+- `reports/TASK6_NEURON_SELECTION.md`
+- `reports/TASK7_GPT2_SUPPRESSION_SMOKE.md`
 - `configs/frozen/neutral_corpus_manifest.json` - frozen neutral corpus (tracked)
 - `configs/frozen/sink_scope.json` - frozen sink-heavy scope (tracked)
 - `configs/frozen/neuron_attribution.csv` - frozen discovery ranking, 30,720 rows (tracked)
 - `configs/frozen/neuron_attribution_metadata.json` - its provenance and per-layer diagnostics
+- `configs/frozen/neuron_sets.json` - frozen targeted and layer-count-matched random sets
+- `neuron_sink/evaluation.py` - paired neutral metrics, aggregation, and held-out smoke gate
+- `scripts/run_suppression_smoke.py` - exact 24/24/24 Task-7 runner
+- `tests/test_evaluation.py` - frozen-grid, metric, schema, aggregation, and gate tests
 
-## 8. Immediate next task: Task 6 of the RTX 2060 phase
+## 8. Immediate next work package: full phenomenon confirmation
 
-Task 5 is complete; see `reports/TASK5_NEURON_ATTRIBUTION.md`.
+The seven-task RTX 2060 development/falsification phase is complete. Task 7 passed on the first
+registered smoke run, so no second smoke seed is required.
 
-The next task should be kept narrow:
+Move to the registered RTX 4080 SUPER and implement Prompt 7 from
+`docs/06_IMPLEMENTATION_PROMPTS.md`: generalize the exact Task-7 evaluator to GPT-2-small and
+GPT-2-medium with 100/100/100 neutral examples, all six registered fractions, all five alphas, and
+20 matched random controls. Validation alone selects and freezes `k*`; the locked test split is
+then used once for the formal estimate. Implement the paired bootstrap, random percentile, and
+Spearman criteria from `docs/01_PHENOMENON_GATE.md` before the real run.
 
-**Global top-k selection over the frozen discovery ranking, plus five layer-count-matched random
-control sets with fixed seeds.**
+Do not use the RTX 2060 to substitute for this registered full-run hardware, and do not start Qwen,
+downstream benchmarks, layer baselines, robustness checks, or Sink-KD yet.
 
-Do not run any suppression sweep, held-out evaluation, or gate in Task 6. That is Task 7.
+## 9. RTX 2060 phase status
 
-What Tasks 4 and 5 froze, which Task 6 must consume rather than recompute:
-
-| Artefact | Value / path |
-|---|---|
-| Neutral corpus (tracked) | `configs/frozen/neutral_corpus_manifest.json` |
-| Corpus manifest SHA-256 | `c6e077871003e29e12aaaf4c7f24d8e17eb5a1c919a20f3693d069742dd480c7` |
-| Sink scope (tracked) | `configs/frozen/sink_scope.json` |
-| Sink scope SHA-256 | `b8b4c623cb50d078b1e62c5a5bece1b24abab48933b45babd0e76856baaf0235` |
-| Discovery ranking (tracked) | `configs/frozen/neuron_attribution.csv` |
-| Attribution SHA-256 | `9a87247bd8925c107da2e860b57cdebc0586f6404e8028b69cacab96ceb8d692` |
-| Eligible pool | 10 layers x 3072 = 30,720 `(layer, neuron)` pairs |
-| Ranking score | `mean_abs_attr` (never `mean_signed_attr`) |
-
-Required scientific intent:
-
-1. Derive exact `k` for each registered smoke fraction `{0.05%, 0.10%, 0.25%}` of the 30,720
-   eligible neurons, rounding to the nearest positive integer, and record the exact `k`.
-2. Select the global top-`k` by `mean_abs_attr` across eligible `(layer, neuron)` pairs. Retain the
-   per-layer rankings for diagnostics; do not select per layer.
-3. Record per-layer counts of each targeted set. The head of the ranking is depth-skewed - 124 of
-   the top 307 are layer 9 - which is exactly why the primary control is layer-count matched.
-4. Generate five layer-count-matched random control sets per condition with fixed seeds: the same
-   number of neurons in every layer, sampled from that layer's non-targeted neurons. A control set
-   may not contain a targeted neuron for that same condition.
-5. Reruns with the same seed must reproduce the control ids exactly, and the saved neuron-set file
-   must be stable across reruns.
-6. Reuse `neuron_sink.suppression.NeuronSet`; it already validates layer/neuron ids and is what the
-   suppression hook consumes.
-
-Task 6 needs no GPU and no model forward. It is selection bookkeeping over a frozen CSV.
-
-## 9. Remaining RTX 2060 task sequence
-
-The development/falsification phase has seven total tasks. Tasks 1-5 are complete.
-
-- Task 6: global top-k selection + layer-count-matched random controls
-- Task 7: 24/24/24 end-to-end suppression smoke experiment and plausibility gate
-
-Task 7 is the first real neuron-level scientific gate. At least one targeted non-identity condition
-must reduce held-out sink more than all five layer-count-matched random controls. If valid
-implementation remains null on the predefined retry, stop rather than tuning toward a positive
-result.
+All seven Stage-A tasks are complete and the plausibility gate passed. The Task-7 result is strong
+enough to proceed under the registered order, but all formal claims remain contingent on Stage B.
 
 ## 10. What happens after the 2060 phase
 
@@ -439,14 +488,17 @@ Run the existing Task-3 tests:
 python -m pytest tests/test_gpt2_adapter.py tests/test_suppression.py
 ```
 
-On the existing Windows development machine, use the repository `.venv` and keep Hugging Face/model caches on `X:` rather than filling the system drive.
+On the current Windows development machine, use the repository `.venv`; the verified Hugging Face
+cache is `D:\.cache\huggingface` via `NEURON_SINK_HF_CACHE` / `HF_HOME`.
 
 ## 13. Known issues and cautions
 
 1. **Pinned GPT-2 wrapper recursion bug:** `upstream/sink-repro/common/intervention_analysis.py` can recurse in the standard GPT-2 path. The Task-2 adapter deliberately calls the frozen legacy implementation. Do not change the submodule to hide this provenance issue.
 2. **Windows Hugging Face symlink warning:** cache behavior may be less storage-efficient; it did not affect parity.
 3. **Git LFS:** Sink-KD includes checkpoint pointers. Do not trigger large downloads accidentally.
-4. **Result interpretation:** Task 2 proves the established attention sink reproduces. Task 3 proves the suppression machinery is correct. Neither task demonstrates that any specific neurons cause the sink. That scientific claim begins only after attribution and held-out targeted-vs-random suppression.
+4. **Result interpretation:** Task 7 supplies positive held-out targeted-vs-random evidence at smoke
+   scale. It is a permissive plausibility result, not the formal Stage-B confirmation and not a
+   license to skip the remaining gates.
 
 ## 14. Status at handover
 
@@ -455,9 +507,11 @@ On the existing Windows development machine, use the repository `.venv` and keep
 - GPT-2 MLP suppression hook: PASS (reproduced exactly on both dev machines)
 - Neutral corpus freeze + per-layer/per-head sink map: PASS
 - Future-sink activation-times-gradient attribution: PASS
-- Neuron selection and matched controls: NOT STARTED
-- Targeted-vs-random causal result: NOT STARTED
+- Neuron selection and matched controls: PASS
+- GPT-2-small targeted-vs-random smoke result: PASS
+- Full GPT-2-small/medium phenomenon confirmation: NOT STARTED
 - Downstream task drift: NOT STARTED
 - Sink-KD neuron comparison: NOT STARTED
 
-**Next action: Task 6 only — global top-k selection over the frozen discovery ranking plus five layer-count-matched random control sets with fixed seeds. No suppression run, no gate.**
+**Next action: on the registered RTX 4080 SUPER only, implement and run Prompt 7's full
+GPT-2-small/medium phenomenon confirmation. Do not start Qwen or downstream tasks yet.**
