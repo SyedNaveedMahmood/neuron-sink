@@ -4,7 +4,32 @@ Research repository for the next-stage attention-sink project: localize sink-ass
 
 ## Status
 
-**Scaffold / source-integration stage.** The two prior-paper codebases are pinned as exact upstream submodules. No new neuron-localization or neuron-suppression implementation has been added yet.
+**Experiment design registered; implementation has not started.** The two prior-paper codebases are pinned as exact upstream submodules, and the new experiment is specified in `docs/` plus machine-readable configs in `configs/`.
+
+The execution order is deliberately gated:
+
+1. reproduce the existing sink measurement;
+2. test on held-out neutral text whether targeted MLP-neuron suppression reduces the sink more than matched random suppression;
+3. only if that effect is real, evaluate performance drift on MMLU, ARC-Challenge, CulturalBench, and GSM8K;
+4. then compare natural teacher sinks with Sink-KD student sinks.
+
+Development/smoke implementation is registered for an RTX 2060 SUPER; full runs are registered for an RTX 4080 SUPER.
+
+## Experiment design
+
+Start with [`AGENTS.md`](AGENTS.md) and [`docs/README.md`](docs/README.md).
+
+The main design files are:
+
+- `docs/00_MASTER_EXPERIMENT_DESIGN.md`
+- `docs/01_PHENOMENON_GATE.md`
+- `docs/02_DOWNSTREAM_TASKS.md`
+- `docs/03_IMPLEMENTATION_SPEC.md`
+- `docs/04_HARDWARE_RUNBOOK.md`
+- `docs/05_METRICS_AND_SCHEMAS.md`
+- `docs/06_IMPLEMENTATION_PROMPTS.md`
+- `configs/experiment_plan.yaml`
+- `configs/downstream_tasks.yaml`
 
 ## Upstream codebases
 
@@ -24,31 +49,26 @@ See `SOURCE_BRANCHES.md` for provenance.
 
 ## Research question
 
-Can a sparse set of neurons or attention dimensions be causally linked to attention-sink formation, and how much general performance drifts when those units are suppressed?
+Can a sparse set of internal MLP neurons be causally linked to attention-sink formation, and how much neutral and downstream performance drifts when those units are suppressed?
 
-The initial experiment will:
-
-1. identify sink-heavy layers/heads;
-2. rank candidate neurons/dimensions by sink relevance;
-3. suppress top-ranked units at graded strengths;
-4. compare against size- and layer-matched random controls;
-5. measure change in sink strength together with CE/perplexity/task-performance drift;
-6. repeat the analysis for the natural teacher sink and Sink-KD students.
+The primary neuron is defined as an MLP intermediate coordinate immediately before the MLP output projection (`mlp.c_proj` input for GPT-2; `mlp.down_proj` input for Qwen2.5). Attribution ranks candidate units, but causal claims require held-out targeted suppression against layer-count-matched random controls.
 
 ## Repository layout
 
 ```text
 neuron-sink/
+├── AGENTS.md              # coding-agent rules
 ├── upstream/
 │   ├── sink-repro/        # exact pinned submodule for Same Sink, Different Plumbing
 │   └── sink-kd/           # exact pinned submodule for Sink-KD
-├── experiments/           # new experiments go here
-├── configs/               # project-level run configs
+├── docs/                  # registered scientific + implementation design
+├── experiments/           # new experiment implementation/results structure
+├── configs/               # design + future run configs
 ├── scripts/               # project-level entry points
 ├── tests/                 # parity and intervention tests
 ├── results/               # generated outputs (ignored except .gitkeep)
 ├── SOURCE_BRANCHES.md
-└── requirements.txt       # baseline environment inherited from Sink-Repro for now
+└── requirements.txt
 ```
 
 ## Clone
@@ -66,7 +86,7 @@ git submodule update --init --recursive
 
 ## Environment
 
-The root `requirements.txt` currently mirrors the verified Sink-Repro environment. Before the first Sink-KD training run, reconcile any additional dependencies from `upstream/sink-kd` rather than silently changing the pinned baseline.
+The root `requirements.txt` currently mirrors the verified Sink-Repro environment. Additional task-evaluation dependencies should be pinned only when the relevant adapter is implemented.
 
 ```bash
 python -m venv .venv
@@ -77,6 +97,4 @@ pip install -r requirements.txt
 
 ## Next implementation milestone
 
-The first new code should be a small falsification pilot on GPT-2-small: reuse the existing sink metric and NNsight harness, add MLP-neuron suppression plus layer-matched random controls, and record `sink_before`, `sink_after`, `delta_sink`, `ce_before`, `ce_after`, and `delta_ce`.
-
-No paper-specific result is claimed by this repository yet; this commit only prepares the reproducible code base and provenance.
+Follow `docs/06_IMPLEMENTATION_PROMPTS.md` in order. The first GPU milestone is a GPT-2-small falsification smoke test on the RTX 2060 SUPER; full GPT-2-small/medium confirmation and Qwen/downstream runs are reserved for the RTX 4080 SUPER.

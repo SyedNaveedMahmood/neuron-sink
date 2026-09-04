@@ -1,0 +1,143 @@
+version: neuron_sink_design_v1
+registered_date: 2026-09-04
+
+objective: >
+  Test whether sparse MLP intermediate neurons causally support first-position
+  attention sinks, quantify neutral functional drift under targeted suppression,
+  and proceed to downstream tasks only after a held-out targeted-vs-random gate.
+
+upstream:
+  sink_repro:
+    path: upstream/sink-repro
+    branch: main
+    commit: 9ab67e914464b13863b67527d8ea14068ee9ff10
+  sink_kd:
+    path: upstream/sink-kd
+    branch: sink-inheritance-foundation
+    commit: db114c9c5eb6ffc5de13e444c783408ea7401c62
+
+hardware:
+  development:
+    gpu: NVIDIA RTX 2060 SUPER
+    vram_gb: 8
+  full:
+    gpu: NVIDIA RTX 4080 SUPER
+    vram_gb: 16
+
+models:
+  phenomenon_primary:
+    - id: openai-community/gpt2
+      alias: gpt2-small
+      dtype: float32
+    - id: openai-community/gpt2-medium
+      alias: gpt2-medium
+      dtype: float32
+  task_validation:
+    id: Qwen/Qwen2.5-1.5B-Instruct
+    alias: qwen2.5-1.5b-instruct
+    dtype: bfloat16
+  task_smoke_optional:
+    id: Qwen/Qwen2.5-0.5B-Instruct
+    alias: qwen2.5-0.5b-instruct
+    dtype: float16
+
+sink_metric:
+  target_position: 0
+  query_positions: second_half
+  baseline_layer_semantics: upstream_compatible
+  preflight_min_sink: 0.15
+  sink_heavy_layers:
+    rule: top_quartile_and_absolute_floor
+    absolute_floor: 0.15
+    fallback: top_two_above_floor
+  sink_heavy_heads:
+    rule: top_quartile_within_selected_layers
+
+neutral_corpus:
+  source: upstream_sink_kd_openwebtext_validation_sink_300
+  sequence_length: 40
+  partitions:
+    discovery: 100
+    validation: 100
+    test: 100
+  disjoint: true
+  downstream_overlap_forbidden: true
+
+neuron_definition:
+  type: mlp_intermediate_pre_output_projection
+  gpt2_hook: mlp.c_proj.input
+  qwen_hook: mlp.down_proj.input
+  suppression_positions: all
+
+attribution:
+  primary: abs_activation_times_gradient
+  objective: causal_order_future_sink
+  aggregation: mean_over_examples_and_tokens
+  ranking: global_over_eligible_layer_neuron_pairs
+  signed_score_saved: true
+
+fractions_percent:
+  full: [0.01, 0.05, 0.10, 0.25, 0.50, 1.00]
+  smoke: [0.05, 0.10, 0.25]
+
+alphas:
+  full: [1.00, 0.75, 0.50, 0.25, 0.00]
+  smoke: [1.00, 0.50, 0.00]
+
+controls:
+  primary: layer_count_matched_random
+  full_draws: 20
+  smoke_draws: 5
+  confirmatory: activation_matched_random
+
+smoke:
+  model: gpt2-small
+  device: development
+  examples:
+    discovery: 24
+    validation: 24
+    test: 24
+  batch_size: 1
+  gate: >
+    At least one non-identity targeted condition reduces held-out sink more than
+    all five matched-random draws, with parity/tests passing.
+
+full_phenomenon_gate:
+  minimum_relative_sink_reduction: 0.10
+  target_must_exceed_random_percentile: 95
+  bootstrap_ci_target_minus_random_lower_gt: 0.0
+  minimum_spearman_dose_response: 0.8
+  random_draws: 20
+
+operating_point_k_star:
+  selection_split: validation
+  alpha: 0.0
+  rule: smallest_registered_fraction_meeting_all
+  criteria:
+    min_relative_sink_reduction: 0.10
+    min_target_minus_median_random_absolute_baseline_fraction: 0.10
+    bootstrap_ci_lower_gt: 0.0
+    max_delta_ce_nats_per_token: 0.10
+  fallback: k_max_effect_exploratory_only
+
+downstream_conditions:
+  - id: B0
+    type: baseline
+  - id: T1
+    type: targeted
+    k: k_star
+    alpha: 0.0
+  - id: T2
+    type: targeted
+    k: k_star
+    alpha: 0.5
+  - id: R1
+    type: layer_count_matched_random
+    k: k_star
+    alpha: 0.0
+    control_seed: 0
+
+sink_kd:
+  stage: after_basic_phenomenon
+  train_if_missing: false
+  compare_raw_neuron_ids_across_models: false

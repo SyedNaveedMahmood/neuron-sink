@@ -1,0 +1,90 @@
+version: neuron_sink_downstream_v1
+registered_date: 2026-09-04
+primary_model: Qwen/Qwen2.5-1.5B-Instruct
+
+common:
+  deterministic: true
+  use_downstream_for_neuron_selection: false
+  intervention_conditions: [B0, T1, T2, R1]
+  smoke_examples_per_task: 20
+  save_per_example_outputs: true
+  paired_evaluation: true
+  bootstrap_resamples: 10000
+
+mmlu:
+  dataset: cais/mmlu
+  split: test
+  subjects: all_57
+  shots: 5
+  output: multiple_choice
+  scoring: choice_loglikelihood
+  metrics:
+    - accuracy_micro
+    - accuracy_macro_subject
+  viability:
+    type: chance_plus_pp
+    margin_pp: 5
+
+arc_challenge:
+  dataset: allenai/ai2_arc
+  config: ARC-Challenge
+  split: test
+  shots: 0
+  output: multiple_choice
+  scoring: choice_loglikelihood
+  metrics:
+    - accuracy
+  viability:
+    type: empirical_chance_plus_pp
+    margin_pp: 5
+
+culturalbench_easy:
+  dataset: kellycyy/CulturalBench
+  config: CulturalBench-Easy
+  split: test
+  shots: 0
+  output: multiple_choice
+  scoring: choice_loglikelihood
+  metrics:
+    - accuracy
+    - macro_country
+    - macro_region
+    - macro_topic
+  viability:
+    type: chance_plus_pp
+    margin_pp: 5
+
+culturalbench_hard:
+  dataset: kellycyy/CulturalBench
+  config: CulturalBench-Hard
+  split: test
+  shots: 0
+  output: grouped_true_false
+  scoring: benchmark_grouped_question_score
+  metrics:
+    - grouped_accuracy
+    - macro_country
+    - macro_region
+    - macro_topic
+  viability:
+    type: benchmark_floor_plus_pp
+    margin_pp: 5
+
+gsm8k:
+  dataset: openai/gsm8k
+  config: main
+  split: test
+  shots: 5
+  output: generation
+  decoding:
+    do_sample: false
+    temperature: null
+    top_p: null
+  scoring: exact_match_extracted_final_number
+  metrics:
+    - exact_match
+    - invalid_answer_rate
+    - generation_length
+  viability:
+    type: minimum_absolute_score
+    minimum: 0.05
