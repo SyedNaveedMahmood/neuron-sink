@@ -1,6 +1,6 @@
 # Neuron-Sink Project Handover
 
-Last updated: 2026-09-04 (Task 7 complete; Stage A smoke gate PASS)
+Last updated: 2026-09-05 (Stage C complete; Qwen2.5-1.5B model-negative null)
 
 ## 1. Project in one paragraph
 
@@ -16,9 +16,13 @@ Repository:
 
 `https://github.com/SyedNaveedMahmood/neuron-sink`
 
-Current project state before this handover commit:
+Project commit recorded by the Stage B and Stage C runs:
 
-`e1d20e4228ae8428996215648197b0aa004f188a`
+`5bfbf240eacfacfff078f08086f8eb93a0b62c3e`
+
+The Stage B/C implementation, tests, reports, README, and this handover update are currently
+uncommitted. The registered runs record `repo_dirty_at_run=true` and retain the exact dirty-path
+list in provenance. No commit or push has been made.
 
 Two upstream paper codebases are pinned as read-only Git submodules and must not be edited in place:
 
@@ -68,6 +72,11 @@ Verified stack:
 - GPU: NVIDIA RTX 4080 SUPER
 - VRAM: 16 GB
 - Purpose: full GPT-2-small/medium phenomenon confirmation, Qwen2.5-1.5B replication, downstream benchmarks, and later Sink-KD checkpoint analysis
+- Produced: both Stage B GPT-2 full runs and Stage C Qwen2.5-1.5B preflight/full replication
+- Environment: `F:\neuron-sink\.venv`; Hugging Face cache at
+  `F:\.cache\huggingface\neuron-sink`
+- Verified Stage B stack: Python 3.12.3, PyTorch 2.10.0+cu128, Transformers 5.3.0,
+  NNsight 0.7.0, datasets 4.8.4, NumPy 2.4.3, pandas 3.0.1, CUDA 12.8
 
 Do not weaken or change scientific settings merely to make them fit the 2060. Allowed OOM responses are smaller batches, serial layer processing, microbatching, graph release, and streaming outputs. Changes to model, dtype, sequence length, attribution method, fractions, alphas, control count, or benchmark protocol require a documented amendment.
 
@@ -80,6 +89,10 @@ For GPT-2, one neuron is one coordinate of the post-activation MLP intermediate 
 For GPT-2-small this tensor has shape:
 
 `[batch, sequence, 3072]`
+
+For Qwen2.5, one neuron is one coordinate of the SwiGLU product
+`SiLU(gate_proj(x)) * up_proj(x)` entering `model.layers[layer].mlp.down_proj`. For the registered
+1.5B checkpoint this tensor has shape `[batch, sequence, 8960]`.
 
 The suppression operation is:
 
@@ -370,9 +383,100 @@ This is held-out causal evidence at the deliberately permissive smoke scale. It 
 justifies the registered RTX 4080 SUPER confirmation. It is not the formal 100-example/20-control
 gate, does not select `k*`, and does not authorize Qwen or downstream benchmark runs.
 
+### Stage B - Full GPT-2-small/medium phenomenon confirmation: PASS / PASS
+
+Tracked analysis:
+
+`reports/STAGE_B_FULL_PHENOMENON.md`
+
+Runner and implementation:
+
+- `scripts/run_full_phenomenon.py`
+- `neuron_sink/stage_b.py`
+- `neuron_sink/stats.py`
+- generalized `neuron_sink/evaluation.py`, `neuron_sink/selection.py`, and
+  `neuron_sink/provenance.py`
+- `tests/test_stage_b.py`, `tests/test_stats.py`, and updated CUDA integration tests
+
+Registered run directories:
+
+- GPT-2-small: `results/stage_b_full/gpt2-small/run_20260904T131855Z`
+- GPT-2-medium: `results/stage_b_full/gpt2-medium/run_20260904T140056Z`
+
+Both models independently recomputed their discovery sink map, sink scope, future-sink ranking,
+six targeted sets, and 120 deterministic layer-count-matched random sets. Each evaluated the full
+126-condition x five-alpha grid on separate 100-example discovery, validation, and locked-test
+splits. Test access was refused until the validation operating-point artifact existed and passed
+its hash/schema checks.
+
+Primary outcomes:
+
+- both models passed the formal held-out causal gate at 0.05%, 0.10%, 0.25%, 0.50%, and 1.00%;
+- all targeted test dose curves had Spearman `1.0`;
+- GPT-2-small validation selected confirmatory `k*=15` (0.05%, `alpha=0`): validation RSR
+  `0.113873`, Delta CE `0.086014`; held-out RSR `0.107774`;
+- GPT-2-medium produced no confirmatory `k*`: 0.01% stayed under the CE budget but missed the
+  effect thresholds, while every larger effective fraction exceeded the CE budget;
+- GPT-2-medium therefore froze `k_max_effect=860` (1.00%, `alpha=0`) with
+  `exploratory_only=true`; it must not be presented as a low-drift operating point;
+- GPT-2-medium's held-out 0.05% set nevertheless demonstrated the formal causal effect: RSR
+  `0.261207` versus random P95 `0.000316`, with bootstrap difference CI lower `0.231320`;
+- identity, attention/logit validity, causal ordering, hook cleanup, model-state replay, split
+  separation, and smoke-artifact preservation all passed.
+
+Project-level interpretation is **strong support** because both GPT-2 models passed. The important
+qualification is functional specificity: GPT-2-small has a validation-qualified operating point,
+while GPT-2-medium's strong sink effects co-occur with large CE/KL/top-1 drift.
+
+Final project-local suite with cached CUDA integration enabled: **182 passed, 155 subtests passed,
+0 failed, 0 skipped**.
+
+### Stage C - Qwen2.5-1.5B independent replication: NULL / MODEL-NEGATIVE
+
+Tracked analysis:
+
+`reports/STAGE_C_QWEN_REPLICATION.md`
+
+Registered run:
+
+`results/stage_c_full/qwen2.5-1.5b-instruct/run_20260904T160405Z`
+
+Implementation added `Qwen2ModelAdapter`, a separate Qwen-tokenized frozen neutral manifest,
+Stage-C-specific operating-point/gate schemas, real-checkpoint adapter preflight, and exact
+after-validation resume verification. The run used Qwen revision
+`989aa7980e4cf806f80c7fef2b1adb7bc71aa306`, bfloat16/eager attention, and the same disjoint
+100/100/100 neutral roles.
+
+Primary outcomes:
+
+- baseline sink preflight passed: maximum discovery-layer sink `0.672835` at layer 25;
+- independent sink-heavy layers `[4, 6, 14, 23, 24, 25, 26]` and eligible MLP layers `[0..25]`;
+- 232,960 Qwen neurons ranked from discovery only; no GPT-2 neuron/layer transfer;
+- all 126 conditions and five alphas evaluated on each split; identity, validity, causal ordering,
+  and state/hook cleanup passed;
+- validation produced no confirmatory `k*`; exploratory `k_max_effect=2330` (1.00%) had RSR
+  `0.066983` and Delta CE `1.025863`;
+- on locked test, 1.00% targeted suppression beat all matched controls and had a positive
+  bootstrap interval, but RSR was only `0.070714`, Spearman was `0.6`, and Delta CE was
+  `1.093020`;
+- no registered fraction met the 10% RSR or 0.8 dose-response requirements; formal status
+  `NULL_OR_INVALID`, with no passing fraction;
+- every one of the 189,300 scientific-grid forwards was finite and nondegenerate.
+- final project-local suite with cached CUDA integration: 194 passed, 155 subtests, 0 failed/skipped.
+
+The first process stopped after completed validation because of a runner function-alias NameError.
+Test was still locked and no operating point existed. The corrected resume path reproduced the
+discovery and validation row hashes, revalidated every discovery hash lock, froze and verified the
+operating point, then accessed test once. Existing artifacts were not overwritten, and
+`resume.json` records the event.
+
+This is a scientific null, not an execution failure. Under the registered order it blocks Stage D
+for this Qwen checkpoint.
+
 ## 7. Current code surface
 
-The project currently has only the implementation needed through Task 7. Do not prematurely build all future modules.
+The project currently has the implementation and completed evidence through Stage C. Downstream
+adapters remain unimplemented because the Qwen causal gate did not pass.
 
 Important files:
 
@@ -389,52 +493,54 @@ Important files:
 - `configs/experiment_plan.yaml`
 - `configs/downstream_tasks.yaml`
 - `configs/hardware_profiles.yaml`
-- `docs/AMENDMENTS.md` - registered amendments (A001: second dev GPU)
+- `docs/AMENDMENTS.md` - registered amendments A001-A003
 - `reports/TASK2_GPT2_SINK_PARITY.md`
 - `reports/TASK3_GPT2_SUPPRESSION_HOOK.md`
 - `reports/TASK4_NEUTRAL_CORPUS_AND_SINK_MAP.md`
 - `reports/TASK5_NEURON_ATTRIBUTION.md`
 - `reports/TASK6_NEURON_SELECTION.md`
 - `reports/TASK7_GPT2_SUPPRESSION_SMOKE.md`
+- `reports/STAGE_B_FULL_PHENOMENON.md` - formal Stage B results and analysis
+- `reports/STAGE_C_QWEN_REPLICATION.md` - Stage C Qwen replication and null analysis
 - `configs/frozen/neutral_corpus_manifest.json` - frozen neutral corpus (tracked)
+- `configs/frozen/qwen2_5_1_5b_instruct/neutral_corpus_manifest.json` - Qwen-tokenized neutral corpus
 - `configs/frozen/sink_scope.json` - frozen sink-heavy scope (tracked)
 - `configs/frozen/neuron_attribution.csv` - frozen discovery ranking, 30,720 rows (tracked)
 - `configs/frozen/neuron_attribution_metadata.json` - its provenance and per-layer diagnostics
 - `configs/frozen/neuron_sets.json` - frozen targeted and layer-count-matched random sets
 - `neuron_sink/evaluation.py` - paired neutral metrics, aggregation, and held-out smoke gate
+- `neuron_sink/stage_b.py` - full registered grids, operating-point freeze/unlock, and formal gate
+- `neuron_sink/stage_c.py` - Qwen-specific schema, path, lock, and formal-gate boundary
+- `neuron_sink/stats.py` - deterministic paired bootstrap, random percentiles, and dose response
 - `scripts/run_suppression_smoke.py` - exact 24/24/24 Task-7 runner
+- `scripts/run_full_phenomenon.py` - Stage B GPT-2 and Stage C Qwen preflight/full runner
 - `tests/test_evaluation.py` - frozen-grid, metric, schema, aggregation, and gate tests
+- `tests/test_stage_b.py`, `tests/test_stats.py` - Stage B boundaries and statistics
+- `tests/test_qwen_stage_c.py` - Qwen adapter, causal hook, and Stage-C boundary tests
 
-## 8. Immediate next work package: full phenomenon confirmation
+## 8. Immediate next work package: stop at the Stage C null
 
-The seven-task RTX 2060 development/falsification phase is complete. Task 7 passed on the first
-registered smoke run, so no second smoke seed is required.
+Stage C is complete and the exact registered Qwen checkpoint did not clear its independent causal
+gate. The required next action is to preserve and report that model-negative result. Do not
+implement or run MMLU, ARC-Challenge, CulturalBench, or GSM8K for this checkpoint.
 
-Move to the registered RTX 4080 SUPER and implement Prompt 7 from
-`docs/06_IMPLEMENTATION_PROMPTS.md`: generalize the exact Task-7 evaluator to GPT-2-small and
-GPT-2-medium with 100/100/100 neutral examples, all six registered fractions, all five alphas, and
-20 matched random controls. Validation alone selects and freezes `k*`; the locked test split is
-then used once for the formal estimate. Implement the paired bootstrap, random percentile, and
-Spearman criteria from `docs/01_PHENOMENON_GATE.md` before the real run.
+A different Qwen checkpoint, unit type, attribution method, fraction, or intervention grid would
+be a new experiment and must be registered prospectively. It cannot replace or be folded into the
+completed Stage C result.
 
-Do not use the RTX 2060 to substitute for this registered full-run hardware, and do not start Qwen,
-downstream benchmarks, layer baselines, robustness checks, or Sink-KD yet.
+## 9. Stage B status
 
-## 9. RTX 2060 phase status
+Stage B is formally complete. GPT-2-small and GPT-2-medium both pass the causal gate, giving strong
+support for the registered neuron-level phenomenon. GPT-2-small has `k*=15`; GPT-2-medium has only
+an exploratory `k_max_effect=860` because no effective validation fraction met the CE ceiling.
 
-All seven Stage-A tasks are complete and the plausibility gate passed. The Task-7 result is strong
-enough to proceed under the registered order, but all formal claims remain contingent on Stage B.
+## 10. What happens after Stage C
 
-## 10. What happens after the 2060 phase
-
-Only if the 2060 phenomenon looks plausible:
-
-1. move to RTX 4080 SUPER;
-2. run full GPT-2-small and GPT-2-medium phenomenon confirmation with 100/100/100 neutral splits;
-3. use 20 matched-random control sets;
-4. independently preflight/localize a task-capable Qwen2.5-1.5B-Instruct checkpoint;
-5. only if that exact checkpoint passes the sink/neuron gate, evaluate downstream drift on MMLU, ARC-Challenge, CulturalBench, and GSM8K;
-6. later apply the same independent localization/suppression protocol to Sink-KD teacher/student checkpoints.
+1. Preserve the Qwen2.5-1.5B null and its exploratory fallback without retuning.
+2. Do not enter Stage D because the required Qwen causal gate failed.
+3. Any alternate checkpoint or mechanistic extension needs a new registered experiment before
+   measurement.
+4. Do not begin later Sink-KD work merely to bypass the failed Stage C-to-D gate.
 
 Never transfer raw neuron ids from GPT-2 to Qwen or teacher to student. Compare normalized depth, sparsity, sink reduction, dose response, and functional drift instead.
 
@@ -482,23 +588,29 @@ Expected:
 db114c9c5eb6ffc5de13e444c783408ea7401c62
 ```
 
-Run the existing Task-3 tests:
+Run the full project-local suite, including cached CUDA integration tests on a registered GPU:
 
-```bash
-python -m pytest tests/test_gpt2_adapter.py tests/test_suppression.py
+```powershell
+$env:NEURON_SINK_RUN_GPU_INTEGRATION='1'
+$env:NEURON_SINK_HF_CACHE='F:\.cache\huggingface\neuron-sink'
+$env:HF_HOME='F:\.cache\huggingface'
+.\.venv\Scripts\python.exe -m pytest tests -q
 ```
 
-On the current Windows development machine, use the repository `.venv`; the verified Hugging Face
-cache is `D:\.cache\huggingface` via `NEURON_SINK_HF_CACHE` / `HF_HOME`.
+On the RTX 4080 SUPER machine, use `F:\neuron-sink\.venv` and the cache path above.
 
 ## 13. Known issues and cautions
 
 1. **Pinned GPT-2 wrapper recursion bug:** `upstream/sink-repro/common/intervention_analysis.py` can recurse in the standard GPT-2 path. The Task-2 adapter deliberately calls the frozen legacy implementation. Do not change the submodule to hide this provenance issue.
 2. **Windows Hugging Face symlink warning:** cache behavior may be less storage-efficient; it did not affect parity.
 3. **Git LFS:** Sink-KD includes checkpoint pointers. Do not trigger large downloads accidentally.
-4. **Result interpretation:** Task 7 supplies positive held-out targeted-vs-random evidence at smoke
-   scale. It is a permissive plausibility result, not the formal Stage-B confirmation and not a
-   license to skip the remaining gates.
+4. **Result interpretation:** Stage B supplies formal held-out targeted-vs-random evidence in both
+   GPT-2 models. GPT-2-medium has no confirmatory low-drift `k*`; its 1.00% fallback is exploratory.
+5. **Architecture gate:** Qwen2.5-1.5B failed Stage C. Do not run the downstream task-drift suite
+   for this checkpoint.
+6. **Stage C resume:** the initial process stopped after validation on a function-alias NameError.
+   The test split remained unopened; the resume path hash-verified completed artifacts before
+   freezing the operating point and accessing test once. See the tracked report and `resume.json`.
 
 ## 14. Status at handover
 
@@ -509,9 +621,13 @@ cache is `D:\.cache\huggingface` via `NEURON_SINK_HF_CACHE` / `HF_HOME`.
 - Future-sink activation-times-gradient attribution: PASS
 - Neuron selection and matched controls: PASS
 - GPT-2-small targeted-vs-random smoke result: PASS
-- Full GPT-2-small/medium phenomenon confirmation: NOT STARTED
-- Downstream task drift: NOT STARTED
+- Full GPT-2-small phenomenon confirmation: PASS; confirmatory `k*=15`
+- Full GPT-2-medium phenomenon confirmation: PASS; no `k*`, exploratory `k_max_effect=860`
+- Project-level Stage B interpretation: STRONG SUPPORT
+- Qwen2.5-1.5B baseline sink preflight: PASS
+- Qwen2.5-1.5B independent causal replication: NULL / MODEL-NEGATIVE; no `k*`, exploratory `k_max_effect=2330`
+- Downstream task drift: BLOCKED by Stage C gate
 - Sink-KD neuron comparison: NOT STARTED
 
-**Next action: on the registered RTX 4080 SUPER only, implement and run Prompt 7's full
-GPT-2-small/medium phenomenon confirmation. Do not start Qwen or downstream tasks yet.**
+**Next action: stop at and preserve the registered Stage C null. Do not start downstream tasks for
+this checkpoint. Any alternative checkpoint or method requires a new prospective experiment.**

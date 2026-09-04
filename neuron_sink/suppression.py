@@ -1,4 +1,4 @@
-"""Scoped suppression of selected GPT-2 MLP intermediate coordinates."""
+"""Scoped suppression of selected registered MLP intermediate coordinates."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from typing import Callable, Mapping
 import torch
 from torch.utils.hooks import RemovableHandle
 
-from .model_adapters import GPT2ModelAdapter, ModelStructureError
+from .model_adapters import MLPModelAdapter, ModelStructureError
 
 
 @dataclass(frozen=True)
@@ -77,7 +77,7 @@ def _validate_alpha(alpha: float) -> float:
 
 
 class SuppressionContext(AbstractContextManager["SuppressionContext"]):
-    """Install temporary GPT-2 ``c_proj`` pre-hooks for one forward scope.
+    """Install temporary MLP output-projection pre-hooks for one forward scope.
 
     The hook clones the post-activation intermediate tensor, changes only selected
     coordinates at all sequence positions, and returns the replacement input. An
@@ -86,14 +86,14 @@ class SuppressionContext(AbstractContextManager["SuppressionContext"]):
 
     def __init__(
         self,
-        adapter: GPT2ModelAdapter,
+        adapter: MLPModelAdapter,
         neuron_set: NeuronSet,
         alpha: float,
         *,
         observer: SuppressionObserver | None = None,
     ) -> None:
-        if not isinstance(adapter, GPT2ModelAdapter):
-            raise TypeError("adapter must be a GPT2ModelAdapter")
+        if not isinstance(adapter, MLPModelAdapter):
+            raise TypeError("adapter must be an MLPModelAdapter")
         adapter.validate_neuron_set(neuron_set)
         self.adapter = adapter
         self.neuron_set = neuron_set
@@ -159,12 +159,12 @@ class SuppressionContext(AbstractContextManager["SuppressionContext"]):
 
 
 def suppress_neurons(
-    adapter: GPT2ModelAdapter,
+    adapter: MLPModelAdapter,
     neuron_set: NeuronSet,
     alpha: float,
     *,
     observer: SuppressionObserver | None = None,
 ) -> SuppressionContext:
-    """Return a scoped GPT-2 suppression context without running a model forward."""
+    """Return a scoped suppression context without running a model forward."""
 
     return SuppressionContext(adapter, neuron_set, alpha, observer=observer)

@@ -71,3 +71,96 @@ parity) and Task 3 (suppression-hook audit) were re-run on the RTX 2060 before T
 their results are recorded in `reports/TASK2_GPT2_SINK_PARITY.md` and
 `reports/TASK3_GPT2_SUPPRESSION_HOOK.md` under "Reproduction on amended hardware". If that
 re-verification had failed, Task 4 would not have proceeded.
+
+---
+
+## A002 - Freeze a tokenizer-specific neutral corpus for Stage C
+
+- **Date registered:** 2026-09-04
+- **Registered before:** any Stage-C Qwen sink measurement or neuron attribution
+- **Status:** active
+
+### What changed
+
+Stage C uses `Qwen/Qwen2.5-1.5B-Instruct` at the exact resolved revision
+`989aa7980e4cf806f80c7fef2b1adb7bc71aa306`. The existing frozen neutral manifest stores GPT-2
+token ids and cannot be passed to Qwen without changing the text represented by those ids.
+Stage C therefore gets a separate append-only manifest at
+`configs/frozen/qwen2_5_1_5b_instruct/neutral_corpus_manifest.json`, produced before any Qwen
+attention is measured.
+
+The manifest is built by the existing `scripts/prepare_neutral_corpus.py` adapter using the
+Qwen checkpoint's pinned tokenizer and the same registered upstream provider. The generated
+manifest records its tokenizer revision and content hash, and the Stage-C runner refuses any
+other hash.
+
+### What did not change
+
+- corpus provider: pinned Sink-KD `openwebtext_corpus`;
+- source and document window: `stas/openwebtext-10k`, validation window;
+- seed: 0;
+- sequence length: 40 tokens;
+- 300 packed blocks and disjoint 100/100/100 discovery, validation, and test roles;
+- split assignment, anti-leakage checks, and test locking;
+- Stage-C model, sink metric, ranking method, fractions, alphas, random controls, and gate.
+
+### Why this cannot bias a result
+
+Tokenization is a deterministic part of the model input, not a result-dependent choice. Qwen
+cannot scientifically consume GPT-2 vocabulary ids. Registering the Qwen tokenizer before the
+first Qwen forward preserves the same neutral source-text construction and split protocol while
+making each 40-token block valid for the checkpoint under test. No sink value, attribution score,
+validation outcome, or downstream label was inspected when this amendment was registered.
+
+---
+
+## A003 - Use dtype-derived numerical audit tolerances for Stage C
+
+- **Date registered:** 2026-09-04
+- **Registered before:** inspecting any Stage-C sink score or selecting Qwen sink-heavy layers
+- **Status:** active
+
+### What changed
+
+The pinned upstream attention and metric tolerances were calibrated for float32 GPT-2. Stage C is
+registered in bfloat16. For Qwen audit checks only, the absolute tolerance is now
+`max(upstream_tolerance, 2 * torch.finfo(torch.bfloat16).eps)`, which is `0.015625`. This applies
+to attention row-sum validity, decomposition of the sink map against the upstream scalar metric,
+and equality of the differentiable future-sink objective to the frozen attention-map reduction.
+Causal-mask leakage retains the upstream absolute tolerance because masked future entries are
+expected to be exactly zero.
+
+### What did not change
+
+The model outputs are not rounded, corrected, or recast before sink measurement. The sink metric,
+layer/head aggregation, `0.15` floor, sink-layer selection, neuron ranking, intervention grid,
+random controls, CE/KL metrics, and causal-gate thresholds are unchanged. Baseline and
+intervention forwards remain bfloat16 and use the same dtype.
+
+### Why this cannot bias a result
+
+This is a representation-precision audit bound derived only from the registered dtype, not from a
+sink magnitude or causal effect. A first baseline attempt stopped at the audit boundary because
+the float32 tolerance was inappropriately strict; no sink score, selected layer, attribution,
+validation result, or test result was inspected. The new bound is registered before repeating
+the preflight and applies symmetrically to every Qwen condition.
+
+---
+
+## A004 - Clarify Qwen tokenizer-revision provenance
+
+- **Date recorded:** 2026-09-05
+- **Status:** clarification only; no scientific setting changed
+
+The pinned upstream corpus provider copies a tokenizer revision attribute that Transformers 5.3.0
+leaves unset. Consequently, the frozen Qwen corpus JSON contains
+`"tokenizer_revision": null`, just like the existing GPT-2 neutral manifest. A002's statement that
+the manifest records the revision should be read as the complete corpus-freeze artifact set: the
+freeze run's `run_config.json` records the resolved SHA
+`989aa7980e4cf806f80c7fef2b1adb7bc71aa306`, while the tracked manifest records the tokenizer
+name and immutable token-id content hash.
+
+The Stage-C runner hard-codes and records that exact tokenizer/model revision, enforces the Qwen
+tokenizer name and registered manifest hash, and verifies the loaded model's `_commit_hash` before
+measurement. This clarification changes no input IDs, split, model forward, sink value, ranking,
+intervention, statistic, or gate result.

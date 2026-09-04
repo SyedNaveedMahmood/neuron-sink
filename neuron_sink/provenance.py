@@ -114,6 +114,36 @@ def require_registered_gpu(profile: str) -> tuple[torch.device, str, int]:
     return device, gpu_name, total_vram
 
 
+def require_any_registered_gpu(
+    profiles: Iterable[str] = ("dev", "full"),
+) -> tuple[torch.device, str, int, str]:
+    """Return a registered GPU for hardware-agnostic CUDA integration tests.
+
+    Scientific runners must continue to call :func:`require_registered_gpu` with their
+    exact role.  This helper only prevents model-level integration tests from treating the
+    registered full-run card as an unregistered development card.
+    """
+
+    requested = tuple(str(profile) for profile in profiles)
+    unknown = [profile for profile in requested if profile not in REGISTERED_GPUS]
+    if unknown:
+        raise ProvenanceError(f"Unknown hardware profile(s) {unknown}")
+    if not torch.cuda.is_available():
+        raise ProvenanceError("A registered CUDA GPU is required")
+    device = torch.device("cuda:0")
+    gpu_name = torch.cuda.get_device_name(device)
+    matching = [
+        profile for profile in requested if gpu_name in REGISTERED_GPUS[profile]
+    ]
+    if len(matching) != 1:
+        raise ProvenanceError(
+            f"GPU {gpu_name!r} does not match exactly one requested registered profile "
+            f"{requested}"
+        )
+    total_vram = int(torch.cuda.get_device_properties(device).total_memory)
+    return device, gpu_name, total_vram, matching[0]
+
+
 def package_versions(names: Iterable[str] = PACKAGE_VERSION_NAMES) -> dict[str, str]:
     versions: dict[str, str] = {}
     for name in names:

@@ -6,6 +6,7 @@ from .attribution import (
     attribution_rows,
     attribution_sha256,
     capture_c_proj_input,
+    capture_mlp_projection_input,
     objective_depends_on_layer,
     rank_neurons,
     require_future_targets,
@@ -22,7 +23,12 @@ from .evaluation import (
     registered_smoke_conditions,
     validate_phenomenon_row,
 )
-from .model_adapters import GPT2ModelAdapter, ModelStructureError
+from .model_adapters import (
+    GPT2ModelAdapter,
+    MLPModelAdapter,
+    ModelStructureError,
+    Qwen2ModelAdapter,
+)
 from .selection import (
     FrozenAttributionRanking,
     FrozenNeuronSets,
@@ -45,8 +51,10 @@ __all__ = [
     "FrozenAttributionRanking",
     "FrozenNeuronSets",
     "GPT2ModelAdapter",
+    "MLPModelAdapter",
     "ModelStructureError",
     "NeuronSet",
+    "Qwen2ModelAdapter",
     "SelectionCondition",
     "SelectionError",
     "SmokeCondition",
@@ -55,6 +63,7 @@ __all__ = [
     "attribution_sha256",
     "aggregate_phenomenon_rows",
     "capture_c_proj_input",
+    "capture_mlp_projection_input",
     "build_selection_conditions",
     "exact_k",
     "evaluate_smoke_gate",

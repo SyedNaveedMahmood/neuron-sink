@@ -272,7 +272,10 @@ def forward_snapshot(
         sink = float(
             differentiable_sink_score(attentions, layers=sink_layers).detach().item()
         )
-        shifted_logits = logits[:, :-1, :].contiguous()
+        # Metric arithmetic is float32 even when the registered forward is bfloat16.
+        # This does not change model outputs; it prevents large-vocabulary CE/KL
+        # reductions from inheriting avoidable low-precision accumulation error.
+        shifted_logits = logits[:, :-1, :].float().contiguous()
         shifted_labels = input_ids[:, 1:].contiguous()
         ce = float(F.cross_entropy(
             shifted_logits.view(-1, shifted_logits.shape[-1]),
@@ -338,8 +341,8 @@ def paired_metrics(
             f"Logit shapes differ: {baseline.logits.shape} != "
             f"{intervention.logits.shape}"
         )
-    baseline_next = baseline.logits[:, :-1, :]
-    intervention_next = intervention.logits[:, :-1, :]
+    baseline_next = baseline.logits[:, :-1, :].float()
+    intervention_next = intervention.logits[:, :-1, :].float()
     with torch.inference_mode():
         baseline_log_probs = F.log_softmax(baseline_next, dim=-1)
         intervention_log_probs = F.log_softmax(intervention_next, dim=-1)
@@ -405,16 +408,31 @@ def paired_metrics(
     }
 
 
-def validate_phenomenon_row(row: Mapping[str, Any]) -> None:
-    """Validate one machine-readable row before it is saved or aggregated."""
+def validate_phenomenon_row(
+    row: Mapping[str, Any],
+    *,
+    allowed_stages: Sequence[str] = SMOKE_SPLITS,
+    allowed_alphas: Sequence[float] = SMOKE_ALPHAS,
+) -> None:
+    """Validate one machine-readable row before it is saved or aggregated.
+
+    The defaults preserve Task 7's exact smoke contract.  Stage B supplies its larger
+    registered stage/alpha grids explicitly; accepting those values is never implicit.
+    """
 
     missing = [field for field in PHENOMENON_ROW_FIELDS if field not in row]
     if missing:
         raise EvaluationError(f"Per-example row is missing fields: {missing}")
-    if row["stage"] not in SMOKE_SPLITS:
-        raise EvaluationError(f"Unknown smoke stage {row['stage']!r}")
-    if float(row["alpha"]) not in SMOKE_ALPHAS:
-        raise EvaluationError(f"Unregistered smoke alpha {row['alpha']!r}")
+    stages = tuple(str(value) for value in allowed_stages)
+    alphas = tuple(float(value) for value in allowed_alphas)
+    if row["stage"] not in stages:
+        raise EvaluationError(
+            f"Stage {row['stage']!r} is not in the registered grid {stages}"
+        )
+    if float(row["alpha"]) not in alphas:
+        raise EvaluationError(
+            f"Alpha {row['alpha']!r} is not in the registered grid {alphas}"
+        )
     if int(row["prompt_tokens"]) < 2:
         raise EvaluationError("prompt_tokens must be at least 2")
     if int(row["prediction_tokens"]) != int(row["prompt_tokens"]) - 1:
@@ -438,13 +456,18 @@ def validate_phenomenon_row(row: Mapping[str, Any]) -> None:
 
 def aggregate_phenomenon_rows(
     rows: Sequence[Mapping[str, Any]],
+    *,
+    allowed_stages: Sequence[str] = SMOKE_SPLITS,
+    allowed_alphas: Sequence[float] = SMOKE_ALPHAS,
 ) -> list[dict[str, Any]]:
     """Aggregate paired rows by split, condition, and alpha."""
 
     grouped: dict[tuple[str, str, float], list[Mapping[str, Any]]] = {}
     order: list[tuple[str, str, float]] = []
     for row in rows:
-        validate_phenomenon_row(row)
+        validate_phenomenon_row(
+            row, allowed_stages=allowed_stages, allowed_alphas=allowed_alphas
+        )
         key = (str(row["stage"]), str(row["condition_id"]), float(row["alpha"]))
         if key not in grouped:
             grouped[key] = []

@@ -642,15 +642,21 @@ def build_neuron_sets_document(
     fractions_percent: Sequence[float | Decimal],
     control_draws: int,
     base_seed: int = REGISTERED_BASE_SEED,
+    experiment_id: str = "task6_selection",
 ) -> dict[str, Any]:
-    """Create the stable, hash-bearing JSON document consumed by Task 7."""
+    """Create a stable, hash-bearing discovery selection document.
+
+    The default preserves the byte-identical Task-6 smoke artefact.  Stage B supplies a
+    distinct experiment id so its full-model selections cannot be mistaken for or written
+    over the tracked smoke candidates.
+    """
 
     condition_ids = [condition.condition_id for condition in conditions]
     if len(condition_ids) != len(set(condition_ids)):
         raise SelectionError("Condition ids must be unique")
     document: dict[str, Any] = {
         "schema": SCHEMA_VERSION,
-        "experiment_id": "task6_selection",
+        "experiment_id": experiment_id,
         "stage": "discovery",
         "model_id": ranking.model_id,
         "model_revision": ranking.model_revision,
@@ -684,6 +690,11 @@ def build_neuron_sets_document(
             "These are attribution-ranked intervention candidates and matched random "
             "controls, not causal neurons. Causal evidence requires Task 7's held-out "
             "suppression comparison."
+            if experiment_id == "task6_selection"
+            else
+            "These are attribution-ranked intervention candidates and matched random "
+            "controls, not causal neurons. Causal evidence requires held-out suppression "
+            "against the saved layer-count-matched controls."
         ),
     }
     document["neuron_sets_sha256"] = canonical_sha256(document)

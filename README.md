@@ -4,9 +4,10 @@ Research repository for the next-stage attention-sink project: localize sink-ass
 
 ## Status
 
-**Stage A (implementation and falsification) is complete: Tasks 1-7 PASS.** The two
-prior-paper codebases are pinned as exact upstream submodules, and the experiment is specified in
-`docs/` plus machine-readable configs in `configs/`.
+**Stages A-C are complete. Stage B passed for both GPT-2 checkpoints, while the independent
+Qwen2.5-1.5B Stage C replication produced a valid model-specific null.** The Qwen baseline sink
+was strong, but no registered neuron fraction passed its held-out causal gate. Under the registered
+ordering, Stage D downstream benchmarks are blocked for this checkpoint.
 
 | Task | Status |
 |---|---|
@@ -17,17 +18,16 @@ prior-paper codebases are pinned as exact upstream submodules, and the experimen
 | 5. Future-sink activation-times-gradient attribution | PASS |
 | 6. Top-k selection + layer-matched random controls | PASS |
 | 7. 24/24/24 suppression smoke experiment and plausibility gate | PASS |
+| Stage B. Full 100/100/100 GPT-2-small and GPT-2-medium confirmation | PASS / PASS |
+| Stage C. Qwen2.5-1.5B independent replication | NULL / MODEL-NEGATIVE |
 
-Task 7 supplied the first held-out causal evidence at smoke scale. On the locked 24-example test
-split, all six targeted non-identity cells beat every one of their five layer-count-matched random
-controls, all three targeted sets passed the registered dose direction, and identity/validity/state
-leakage checks passed. The strongest smoke sink reduction was 14.97%; the smallest `k=15` set
-reduced the sink by 12.92% under full suppression. See
-[`reports/TASK7_GPT2_SUPPRESSION_SMOKE.md`](reports/TASK7_GPT2_SUPPRESSION_SMOKE.md).
-
-This is a permissive plausibility result, not the formal phenomenon confirmation. The full
-100/100/100, 20-control GPT-2-small/medium experiment remains required before a model-level causal
-claim or downstream work.
+Stage B independently recomputed the discovery sink map, future-sink neuron ranking, and 20
+layer-count-matched controls for each checkpoint, selected the operating point from validation
+only, and opened each locked 100-example test split once. Five of six registered fractions passed
+the formal test gate in each model. GPT-2-small selected confirmatory `k*=15` (0.05%); GPT-2-medium
+passed the causal gate but had no validation fraction that combined the required effect with the
+registered CE budget, so its `k_max_effect=860` fallback is exploratory only. See the full analysis
+in [`reports/STAGE_B_FULL_PHENOMENON.md`](reports/STAGE_B_FULL_PHENOMENON.md).
 
 The execution order is deliberately gated:
 
@@ -35,6 +35,12 @@ The execution order is deliberately gated:
 2. test on held-out neutral text whether targeted MLP-neuron suppression reduces the sink more than matched random suppression;
 3. only if that effect is real, evaluate performance drift on MMLU, ARC-Challenge, CulturalBench, and GSM8K;
 4. then compare natural teacher sinks with Sink-KD student sinks.
+
+Stage C independently mapped Qwen's sink, ranked all 232,960 eligible `(layer, neuron)` pairs,
+generated 20 matched controls per fraction, and ran the full locked 100/100/100 grid. At 1.00%,
+targeted suppression beat matched random but achieved only 7.07% test RSR, Spearman `0.6`, and
+Delta CE `1.093`; the formal gate therefore failed. See
+[`reports/STAGE_C_QWEN_REPLICATION.md`](reports/STAGE_C_QWEN_REPLICATION.md).
 
 Development/smoke implementation is registered for the RTX 2060 class (see amendment `A001` in
 [`docs/AMENDMENTS.md`](docs/AMENDMENTS.md)); full runs are registered for an RTX 4080 SUPER.
@@ -123,7 +129,7 @@ pip install -r requirements.txt
 
 ## Next implementation milestone
 
-Move to the registered RTX 4080 SUPER and implement Prompt 7: generalize the exact smoke pipeline
-to the full 100/100/100 GPT-2-small/medium phenomenon experiment, all registered fractions and
-alphas, 20 matched controls, validation-only `k*` selection, and one locked final test pass. Qwen
-and downstream experiments remain gated until the corresponding phenomenon requirements pass.
+Stage C is closed as a model-negative result. Do not implement or run MMLU, ARC-Challenge,
+CulturalBench, or GSM8K for this Qwen checkpoint. A different checkpoint, unit type, attribution
+method, or intervention grid must be registered prospectively as a new experiment; it must not be
+used to reinterpret or overwrite this null.

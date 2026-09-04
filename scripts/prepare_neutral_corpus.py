@@ -64,6 +64,17 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--model-id", default="gpt2",
                         help="Tokenizer source; must match the model the sink map uses.")
     parser.add_argument("--revision", default="main")
+    parser.add_argument(
+        "--experiment-id",
+        default="task4_neutral_corpus",
+        help="Provenance id; Stage C uses its separately registered corpus-freeze id.",
+    )
+    parser.add_argument(
+        "--frozen-manifest",
+        type=Path,
+        default=FROZEN_MANIFEST,
+        help="Append-only frozen-manifest target (defaults to the registered GPT-2 path).",
+    )
     parser.add_argument("--cut-length", type=int, default=REGISTERED_CUT_LENGTH)
     parser.add_argument("--seed", type=int, default=REGISTERED_SEED)
     parser.add_argument("--split-size", type=int, default=FULL_SPLIT_SIZE,
@@ -107,7 +118,7 @@ def main() -> int:
 
     pool_size = args.split_size * len(SPLIT_NAMES)
     output_dir = prepare_output_dir(
-        args.output_dir or ROOT / "results" / "task4_neutral_corpus" / run_stamp()
+        args.output_dir or ROOT / "results" / args.experiment_id / run_stamp()
     )
 
     submodule_commits = require_pinned_submodules()
@@ -163,7 +174,10 @@ def main() -> int:
     )
     lengths = Counter(item.n_tokens for item in corpus.items)
     lengths_pass = lengths == Counter({args.cut_length: pool_size})
-    vocab_size = int(getattr(tokenizer, "vocab_size", 50257))
+    # ``vocab_size`` is only the base vocabulary for tokenizers with added special
+    # tokens (including Qwen2.5). ``len(tokenizer)`` is the actual valid embedding-id
+    # range and equals ``vocab_size`` for the original GPT-2 freeze.
+    vocab_size = len(tokenizer)
     ids_in_range = all(
         0 <= token < vocab_size for item in corpus.items for token in item.input_ids
     )
@@ -215,7 +229,7 @@ def main() -> int:
     corpus.save(output_dir / "neutral_corpus_manifest.json")
 
     run_config = {
-        "experiment_id": "task4_neutral_corpus",
+        "experiment_id": args.experiment_id,
         "stage": "corpus_freeze",
         "model_id": args.model_id,
         "tokenizer_id": args.model_id,
@@ -275,19 +289,20 @@ def main() -> int:
     write_json(output_dir / "summary.json", summary)
 
     if freeze and task_pass:
-        FROZEN_DIR.mkdir(parents=True, exist_ok=True)
-        if FROZEN_MANIFEST.exists():
-            existing = NeutralCorpus.load(FROZEN_MANIFEST)
+        frozen_manifest = args.frozen_manifest.resolve()
+        frozen_manifest.parent.mkdir(parents=True, exist_ok=True)
+        if frozen_manifest.exists():
+            existing = NeutralCorpus.load(frozen_manifest)
             if existing.manifest_sha256 != corpus.manifest_sha256:
                 raise SystemExit(
-                    f"{FROZEN_MANIFEST} already holds a different frozen corpus "
+                    f"{frozen_manifest} already holds a different frozen corpus "
                     f"({existing.manifest_sha256}). A frozen manifest is immutable; "
                     "register a new experiment id rather than overwriting it."
                 )
-            print(f"frozen manifest already matches: {FROZEN_MANIFEST}")
+            print(f"frozen manifest already matches: {frozen_manifest}")
         else:
-            corpus.save(FROZEN_MANIFEST)
-            print(f"frozen manifest written: {FROZEN_MANIFEST}")
+            corpus.save(frozen_manifest)
+            print(f"frozen manifest written: {frozen_manifest}")
 
     print(f"TASK4_CORPUS={'PASS' if task_pass else 'FAIL'}")
     print(f"corpus_id={corpus.corpus_id}")

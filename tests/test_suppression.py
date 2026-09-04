@@ -7,7 +7,7 @@ import torch
 from transformers import GPT2Config, GPT2LMHeadModel
 
 from neuron_sink import GPT2ModelAdapter, ModelStructureError, NeuronSet, suppress_neurons
-from neuron_sink.provenance import require_registered_gpu
+from neuron_sink.provenance import require_any_registered_gpu
 
 
 def tiny_gpt2() -> GPT2LMHeadModel:
@@ -174,8 +174,8 @@ class SuppressionUnitTests(unittest.TestCase):
 )
 class GPT2CudaIntegrationTests(unittest.TestCase):
     def test_real_gpt2_c_proj_input_on_registered_dev_gpu(self) -> None:
-        # Amendment A001: both registered dev GPUs are accepted, via one shared list.
-        require_registered_gpu("dev")
+        # Model-level hook semantics are identical on either registered hardware role.
+        require_any_registered_gpu()
         cache_dir = os.environ.get("NEURON_SINK_HF_CACHE") or None
         revision = "607a30d783dfa663caf39e06633721c8d4cfcd7e"
         model = GPT2LMHeadModel.from_pretrained(

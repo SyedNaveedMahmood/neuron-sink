@@ -23,7 +23,7 @@ from neuron_sink.attribution import (
 )
 from neuron_sink.corpus import LeakageError, NeutralCorpus, NeutralCorpusItem
 from neuron_sink.model_adapters import GPT2ModelAdapter
-from neuron_sink.provenance import canonical_sha256, require_registered_gpu
+from neuron_sink.provenance import canonical_sha256, require_any_registered_gpu
 from neuron_sink.sink_metrics import (
     FrozenScopeError,
     differentiable_sink_score,
@@ -537,7 +537,7 @@ class GPT2CudaAttributionTests(unittest.TestCase):
     def test_attribution_on_the_real_model_and_frozen_scope(self) -> None:
         if not (FROZEN_SCOPE.is_file() and FROZEN_MANIFEST.is_file()):
             self.skipTest("frozen corpus/scope are not present")
-        require_registered_gpu("dev")
+        require_any_registered_gpu()
         corpus = NeutralCorpus.load(FROZEN_MANIFEST)
         scope = load_frozen_sink_scope(
             FROZEN_SCOPE, expected_corpus_manifest_sha256=corpus.manifest_sha256

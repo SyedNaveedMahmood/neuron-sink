@@ -6,10 +6,11 @@ sink-heavy attention layers ``j > l``, and for neuron ``n`` in eligible MLP laye
 
     I(l, n) = mean over examples and token positions of | a(l,n) * dS_future(l)/da(l,n) |
 
-``a`` is the tensor entering ``transformer.h[l].mlp.c_proj`` -- the registered neuron
-definition (``handover.md`` section 4), the same tensor ``neuron_sink.suppression``
-multiplies by ``alpha``. Ranking is by ``mean_abs_attr``; ``mean_signed_attr`` is saved for
-analysis and must never be ranked by, because signed scores cancel across tokens.
+``a`` is the tensor entering the model-specific MLP output projection -- ``mlp.c_proj``
+for GPT-2 and ``mlp.down_proj`` for Qwen2.5 -- the same tensor
+``neuron_sink.suppression`` multiplies by ``alpha``. Ranking is by ``mean_abs_attr``;
+``mean_signed_attr`` is saved for analysis and must never be ranked by, because signed
+scores cancel across tokens.
 
 Token scope is every sequence position, matching the registered aggregation
 (``configs/experiment_plan.yaml``: ``aggregation: mean_over_examples_and_tokens``) and the
@@ -24,9 +25,10 @@ function here selects, thresholds, or suppresses anything.
 
 Memory (``docs/04_HARDWARE_RUNBOOK.md``, "Memory discipline" -- attribution is the
 highest-risk path): batch size 1, one eligible MLP layer per backward pass, graph and
-captured tensors released between examples and layers. :func:`capture_c_proj_input` hands the
-model a *detached* leaf, so with model parameters frozen nothing upstream of layer ``l``'s
-``c_proj`` requires grad, no graph is built for layers ``0..l-1`` at all, and no embedding
+captured tensors released between examples and layers.
+:func:`capture_mlp_projection_input` hands the model a *detached* leaf, so with model
+parameters frozen nothing upstream of layer ``l``'s output projection requires grad, no
+graph is built for layers ``0..l-1`` at all, and no embedding
 backward ever runs. This does not change the quantity being measured: ``dS_future/da`` is a
 partial derivative with respect to ``a``, which does not depend on how ``a`` was produced.
 """
@@ -48,7 +50,7 @@ from .corpus import (
     assert_no_downstream_source,
     require_discovery_split,
 )
-from .model_adapters import GPT2ModelAdapter, ModelStructureError
+from .model_adapters import MLPModelAdapter, ModelStructureError
 from .provenance import canonical_sha256
 from .sink_metrics import REGISTERED_TARGET_POSITION, differentiable_sink_score
 
@@ -116,10 +118,10 @@ def require_future_targets(layer: int, targets: Sequence[int]) -> tuple[int, ...
 
 
 @contextmanager
-def capture_c_proj_input(
-    adapter: GPT2ModelAdapter, layer: int
+def capture_mlp_projection_input(
+    adapter: MLPModelAdapter, layer: int
 ) -> Iterator[dict[str, torch.Tensor]]:
-    """Capture one layer's ``mlp.c_proj`` input as a differentiable leaf.
+    """Capture one layer's registered MLP projection input as a differentiable leaf.
 
     The hook detaches the incoming tensor and returns the leaf in its place, so the value the
     model computes with is unchanged while the backward pass stops exactly at the registered
@@ -136,7 +138,7 @@ def capture_c_proj_input(
             )
         if "activation" in captured:
             raise AttributionError(
-                f"Layer {layer} c_proj ran twice inside one capture; attribution uses one "
+                f"Layer {layer} MLP projection ran twice inside one capture; attribution uses one "
                 "capture per forward pass so a gradient cannot be attributed to the wrong "
                 "activation"
             )
@@ -149,6 +151,20 @@ def capture_c_proj_input(
         yield captured
     finally:
         handle.remove()
+
+
+@contextmanager
+def capture_c_proj_input(
+    adapter: MLPModelAdapter, layer: int
+) -> Iterator[dict[str, torch.Tensor]]:
+    """Backward-compatible alias for the model-generic MLP capture context.
+
+    The public name predates Qwen support. New architecture-neutral code should use
+    :func:`capture_mlp_projection_input`; both names install the same validated hook.
+    """
+
+    with capture_mlp_projection_input(adapter, layer) as captured:
+        yield captured
 
 
 @dataclass(frozen=True)
@@ -164,7 +180,7 @@ class ExampleAttribution:
 
 def score_example(
     model: torch.nn.Module,
-    adapter: GPT2ModelAdapter,
+    adapter: MLPModelAdapter,
     input_ids: torch.Tensor,
     layer: int,
     targets: Sequence[int],
@@ -188,7 +204,7 @@ def score_example(
             f"of shape {tuple(input_ids.shape)}"
         )
 
-    with capture_c_proj_input(adapter, layer) as captured:
+    with capture_mlp_projection_input(adapter, layer) as captured:
         with torch.enable_grad():
             output = model(
                 input_ids=input_ids,
@@ -226,7 +242,7 @@ def score_example(
 
 def objective_depends_on_layer(
     model: torch.nn.Module,
-    adapter: GPT2ModelAdapter,
+    adapter: MLPModelAdapter,
     input_ids: torch.Tensor,
     mlp_layer: int,
     attention_layers: Sequence[int],
@@ -239,12 +255,12 @@ def objective_depends_on_layer(
     Deliberately skips :func:`require_future_targets`, because probing a same-layer or
     earlier-layer target is the point: it turns the causal-ordering constraint from an
     assumption into a measurement. With model parameters frozen, an objective built from
-    attention at layer ``j <= mlp_layer`` is not connected to layer ``mlp_layer``'s ``c_proj``
-    input at all, so the returned score carries no ``grad_fn`` and this returns ``False`` --
+    attention at layer ``j <= mlp_layer`` is not connected to layer ``mlp_layer``'s output-
+    projection input at all, so the returned score carries no ``grad_fn`` and this returns ``False`` --
     a stronger statement than a numerically zero gradient.
     """
 
-    with capture_c_proj_input(adapter, mlp_layer) as captured:
+    with capture_mlp_projection_input(adapter, mlp_layer) as captured:
         with torch.enable_grad():
             output = model(
                 input_ids=input_ids,
@@ -393,7 +409,7 @@ def _require_discovery_items(
 
 def rank_neurons(
     model: torch.nn.Module,
-    adapter: GPT2ModelAdapter,
+    adapter: MLPModelAdapter,
     corpus: NeutralCorpus,
     future_sink_layers: Mapping[int, Sequence[int]],
     *,
