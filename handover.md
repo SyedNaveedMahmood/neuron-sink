@@ -473,6 +473,76 @@ operating point, then accessed test once. Existing artifacts were not overwritte
 This is a scientific null, not an execution failure. Under the registered order it blocks Stage D
 for this Qwen checkpoint.
 
+
+### Stage C3 - Reachability-aware, direction-aware, measurement-based localization: REGISTERED
+
+Amendment: `A007`. Config: `configs/experiment_plan_c3.yaml`. Registered on 2026-09-05, before any
+Stage-C3 corpus was built and before any Stage-C3 model forward. **Implemented and unit-tested;
+the registered arms have not been run.**
+
+Stage C3 exists because a per-sink-layer decomposition of the completed Stage-C test result found a
+second defect beyond the sign error A005 already identified. At the 0.01% condition:
+
+| Sink layer | RSR | Weight in metric | Contribution |
+|---:|---:|---:|---:|
+| 4, 6, 14 | 0.00% | 41.1% | 0.00 pp |
+| 23 | -2.92% | 15.5% | -0.45 pp |
+| 24 | -1.38% | 14.1% | -0.19 pp |
+| 25 | -0.48% | 15.6% | -0.07 pp |
+| 26 | -13.75% | 13.7% | -1.89 pp |
+
+These reconstruct the reported -2.598% aggregate to within 0.012 pp. Layers 4, 6 and 14 moved by
+*exactly* zero because a decoder block computes attention before its MLP, and 16 of the 23 selected
+neurons sat in MLP layer 25, which can only influence layer 26. So 41.1% of the graded metric was
+causally unreachable at any sparsity or alpha. Fixing only the sign would at best turn layer 26's
+-13.75% into +13.75%, an aggregate of **+1.9% against a 10% gate** - which is why Stage C2 alone is
+not expected to clear it.
+
+What C3 changes (all registered in A007 before measurement):
+
+1. per-target-layer attribution - `dS_j/da` per reachable sink layer, not one gradient of their mean;
+2. per-sink-layer budgeted selection - each sink layer gets a share of `k` proportional to its weight
+   in the graded metric, filled only from MLP layers that can reach it, so the union reaches every
+   graded layer and the registered full-scope gate becomes attainable;
+3. strictly positive direction requirement, applied per target;
+4. measured-ablation rerank - the gradient only shortlists; the ranking is the effect measured under
+   the registered `alpha=0` intervention on discovery;
+5. float32 metric and `activation * gradient` arithmetic (the backward stays in the registered
+   dtype);
+6. mandatory per-sink-layer reporting for every condition;
+7. a first-order direction guard that aborts before the grid if a target set predicts a sink increase;
+8. registered comparison arms: the whole-MLP layer-attenuation baseline (per layer and all
+   eligible layers at once), the Stage-C absolute arm and the Stage-C2 signed arm on the same fresh
+   blocks, and GPT-2-small as a method-validation control.
+
+Note on what the attenuation arm proves: it is a *maximal intervention*, not an upper bound.
+Suppression is not monotone in the sink - Stage C is itself a case where suppressing neurons raised
+it - so a sparse subset can exceed a whole-layer effect, and a dev check on GPT-2-small showed
+exactly that. The one rigorous bound in this design is causal reachability, recorded per condition
+as `reachable_metric_weight`; that arithmetic is what identified Stage C's 41.1% unreachable share.
+
+**Nothing in the registered gate is relaxed.** The threshold, fractions, alphas, controls, RNG,
+bootstrap and operating-point rule are inherited unchanged; change 2 is what makes the existing
+metric reachable.
+
+New modules: `neuron_sink/attribution_c3.py`, `neuron_sink/ablation_screen.py`,
+`neuron_sink/selection_c3.py`, `neuron_sink/layer_baseline.py`, `neuron_sink/stage_c3.py`,
+`tests/test_stage_c3.py`. `neuron_sink/sink_metrics.py` gained
+`differentiable_sink_scores_per_layer` and an opt-in float32 reduction; `neuron_sink/corpus.py`
+gained `skip_blocks`. All additive - Stage B/C/C2 behaviour is byte-identical when the new options
+are unused.
+
+Corpus windows, both frozen and hash-pinned before any run:
+
+| Model | corpus id | blocks | disjoint from |
+|---|---|---|---|
+| Qwen2.5-1.5B | `openwebtext_validation_ppl_600_skip300` | 600-899 | Stage C (0-299), Stage C2 (300-599) |
+| GPT-2-small | `openwebtext_validation_ppl_300` | 300-599 | Stage B GPT-2 (0-299) |
+
+The pinned provider offers only offsets 0 (`sink`) and 300 (`ppl`), but `ppl` has no cap on
+`n_blocks`, so requesting 600 and dropping the first 300 reaches blocks 600-899 with no upstream
+edit. Packing is a prefix operation, so Stage C2's corpus stays byte-identical and reproducible.
+
 ## 7. Current code surface
 
 The project currently has the implementation and completed evidence through Stage C. Downstream
@@ -522,16 +592,47 @@ Important files:
 - `tests/test_qwen_stage_c.py` - Qwen adapter, causal hook, and Stage-C boundary tests
 - `tests/test_stage_c2.py` - signed selection, fresh corpus, and Stage-C2 boundary tests
 
-## 8. Immediate next work package: complete the registered Stage C2 run
+## 8. Immediate next work package: run the registered Stage C3 arms
 
-Stage C remains complete and null. Amendment A005 registers a separate Stage C2 experiment to test
-whether absolute-value ranking selected sink-inhibiting neurons. C2 orders strictly positive
-`mean_signed_attr` values on fresh neutral blocks and changes no other scientific setting.
+Stage C2 was still running when Stage C3 was implemented; **do not contend for the GPU**. Finish and
+report C2 first, then run C3. C3 does not depend on the C2 outcome - it was registered before it -
+but the GPU is shared and C2's result belongs in the record first.
 
-The 20-example C2 runtime preflight passed all identity, attention-validity, causal-order,
-fresh-corpus, signed-selection, and state-leakage checks without opening test. Complete the full
-100/100/100 run, then write a separate C2 result report. It cannot replace or be folded into the
-completed Stage C result.
+Run order matters, because two arms are cheap and gate the interpretation of everything else:
+
+```powershell
+$env:NEURON_SINK_HF_CACHE="D:\.cache\huggingface\neuron-sink"; $env:HF_HOME="D:\.cache\huggingface"
+
+# 0. build and pin the Qwen C3 corpus, then paste its manifest_sha256 into
+#    scripts/run_full_phenomenon.py::QWEN_C3_CORPUS_SHA256 (the runner refuses to start without it)
+.venv\Scripts\python.exe scripts\prepare_neutral_corpus.py `
+  --model-id Qwen/Qwen2.5-1.5B-Instruct --revision 989aa7980e4cf806f80c7fef2b1adb7bc71aa306 `
+  --purpose ppl --skip-blocks 300 --experiment-id stage_c3_corpus_freeze `
+  --frozen-manifest configs\frozen\qwen2_5_1_5b_instruct_c3\neutral_corpus_manifest.json
+
+# 1. arm B: the layer-attenuation baseline. Highest information per GPU-minute in the whole plan.
+#    It is a maximal intervention, not an upper bound (suppression is not monotone), but if
+#    attenuating every eligible MLP layer barely moves a sink layer, the sink is very unlikely to
+#    be MLP-mediated at that depth and the unit type is the thing to question.
+.venv\Scripts\python.exe scripts\run_full_phenomenon.py --model qwen2.5-1.5b-instruct-c3 --layer-baseline
+
+# 2. arm E: method validation on a known positive. If C3 cannot reproduce or beat Stage B's
+#    10.78% RSR at k* on GPT-2-small, the method is at fault and no Qwen number is interpretable.
+.venv\Scripts\python.exe scripts\run_full_phenomenon.py --model gpt2-small-c3 --max-examples 20
+.venv\Scripts\python.exe scripts\run_full_phenomenon.py --model gpt2-small-c3
+
+# 3. registered preflights, then the Qwen primary arm
+.venv\Scripts\python.exe scripts\run_full_phenomenon.py --model qwen2.5-1.5b-instruct-c3 --baseline-preflight
+.venv\Scripts\python.exe scripts\run_full_phenomenon.py --model qwen2.5-1.5b-instruct-c3 --max-examples 20
+.venv\Scripts\python.exe scripts\run_full_phenomenon.py --model qwen2.5-1.5b-instruct-c3
+```
+
+Arms C and D (the Stage-C absolute ranking and the Stage-C2 signed ranking re-run on the C3 blocks
+at `alpha=0`) are registered in `configs/experiment_plan_c3.yaml` and still need a runner mode; they
+exist so a C3 improvement can be attributed to the ranking change rather than to the fresh corpus.
+
+Then write `reports/STAGE_C3_*.md` in the Stage-B/C format, **including the per-sink-layer RSR table
+for every condition** and the arm-B attenuation table, and update this file and `README.md`.
 
 ## 9. Stage B status
 
@@ -633,8 +734,17 @@ On the RTX 4080 SUPER machine, use `F:\neuron-sink\.venv` and the cache path abo
 - Qwen2.5-1.5B baseline sink preflight: PASS
 - Qwen2.5-1.5B independent causal replication: NULL / MODEL-NEGATIVE; no `k*`, exploratory `k_max_effect=2330`
 - Qwen2.5-1.5B Stage C2 signed-ranking preflight: PASS; full run pending
-- Downstream task drift: BLOCKED pending Stage C2 gate
+- Qwen2.5-1.5B Stage C3 reachability-aware localization: REGISTERED (A007), implemented and
+  unit-tested, arms not yet run
+- Downstream task drift: BLOCKED pending a passing formal gate on some checkpoint
 - Sink-KD neuron comparison: NOT STARTED
 
-**Next action: complete the registered Stage C2 full run, preserve Stage C as a separate null, and
-do not start downstream tasks unless the Stage C2 formal gate passes.**
+**Next action: finish and report the Stage C2 full run, then run the Stage C3 arms in the order in
+section 8 - the layer-attenuation ceiling and the GPT-2-small method-validation arm first, because
+both are cheap and both gate the interpretation of the Qwen primary arm. Preserve Stage C and Stage
+C2 as separate results, and do not start downstream tasks unless a formal gate passes.**
+
+A quantitative expectation is on the record before C2 and C3 are read, so neither can be
+rationalised after the fact: from the Stage-C per-sink-layer decomposition, a sign fix alone (C2)
+moves the aggregate to about **+1.9%** against a 10% threshold. If C2 lands near that, the
+reachability defect - not the sign - is the binding constraint, which is what C3 tests.

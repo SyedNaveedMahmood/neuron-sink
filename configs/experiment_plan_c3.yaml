@@ -1,0 +1,183 @@
+version: neuron_sink_stage_c3_reachability_aware_v1
+registered_date: 2026-09-05
+amendment: A007
+
+experiment_id: stage_c3_reachability_aware_replication_v1
+relationship_to_prior_stages: >
+  Independent prospectively registered experiment. It does not supersede, repair or
+  reinterpret the Stage-C null, and it does not depend on the Stage-C2 outcome.
+
+motivation:
+  defect_1_direction_blind_ranking: >
+    Stage C ranked by absolute activation-times-gradient, which discards sign. 18 of the 23
+    neurons in its smallest target set had negative mean_signed_attr, so suppression was
+    predicted and observed to increase the sink (Spearman -1.0).
+  defect_2_causal_unreachability: >
+    Attribution optimised only the causally reachable sink layers per MLP layer while the
+    gate averages over all of them. Stage C selected 16 of 23 neurons in MLP layer 25, which
+    can only influence sink layer 26, so sink layers 4, 6 and 14 - 41.1% of the graded metric
+    - moved by exactly zero and were unreachable at any sparsity or alpha.
+
+models:
+  - id: Qwen/Qwen2.5-1.5B-Instruct
+    alias: qwen2.5-1.5b-instruct
+    cli_key: qwen2.5-1.5b-instruct-c3
+    role: primary
+    revision: 989aa7980e4cf806f80c7fef2b1adb7bc71aa306
+    tokenizer_id: Qwen/Qwen2.5-1.5B-Instruct
+    tokenizer_revision: 989aa7980e4cf806f80c7fef2b1adb7bc71aa306
+    dtype: bfloat16
+    attention_implementation: eager
+  - id: openai-community/gpt2
+    alias: gpt2-small
+    cli_key: gpt2-small-c3
+    role: method_validation_control
+    revision: 607a30d783dfa663caf39e06633721c8d4cfcd7e
+    tokenizer_id: openai-community/gpt2
+    tokenizer_revision: 607a30d783dfa663caf39e06633721c8d4cfcd7e
+    dtype: float32
+    attention_implementation: eager
+    rationale: >
+      A checkpoint already known to pass the registered gate in Stage B. A method that
+      cannot reproduce or beat its Stage-B effect is at fault, and no Qwen number may be
+      interpreted before this arm is inspected.
+
+neutral_corpus:
+  provider: upstream_sink_kd_openwebtext_corpus
+  dataset_id: Skylion007/openwebtext
+  document_window: validation
+  purpose: ppl
+  seed: 0
+  sequence_length: 40
+  partitions:
+    discovery: 100
+    validation: 100
+    test: 100
+  downstream_overlap_forbidden: true
+  windows:
+    qwen2.5-1.5b-instruct:
+      manifest: configs/frozen/qwen2_5_1_5b_instruct_c3/neutral_corpus_manifest.json
+      corpus_id: openwebtext_validation_ppl_600_skip300
+      skip_blocks: 300
+      block_indices: [600, 899]
+      disjoint_from: [stage_c_blocks_0_299, stage_c2_blocks_300_599]
+    gpt2-small:
+      manifest: configs/frozen/gpt2_small_c3/neutral_corpus_manifest.json
+      corpus_id: openwebtext_validation_ppl_300
+      skip_blocks: 0
+      block_indices: [300, 599]
+      disjoint_from: [stage_b_gpt2_blocks_0_299]
+  rejected_routes:
+    different_seed: reshuffles the same documents; false disjointness
+    document_window_override: not encoded in the upstream corpus id; id collision
+
+sink_metric:
+  target_position: 0
+  query_positions: second_half
+  sink_heavy_layer_rule: top_quartile_and_absolute_floor
+  absolute_floor: 0.15
+  heads: all
+  metric_dtype: float32
+  per_layer_reporting_required: true
+
+neuron_definition:
+  type: mlp_intermediate_pre_output_projection
+  hook: mlp.down_proj.input | mlp.c_proj.input
+  suppression_positions: all
+
+attribution:
+  quantity: activation_times_gradient
+  objective: causal_order_per_target_sink
+  per_target_gradients: true
+  aggregation: mean_over_examples_and_tokens
+  product_dtype: float32
+  backward_dtype: model_dtype
+  shortlist_score: mean_signed_attr
+  required_sign: strictly_positive
+
+screening:
+  method: measured_single_neuron_ablation
+  alpha: 0.0
+  split: discovery
+  default_examples: 20
+  shortlist_per_target: auto_three_times_largest_quota_capped_2000
+  ranking_score: measured_delta_sink
+  rationale: >
+    A first-order score is taken around the current activation; the registered intervention
+    ablates to zero. One ablated forward yields the sink at every registered layer, so the
+    shortlist can be reranked by the effect actually measured.
+
+selection:
+  method: per_sink_layer_budget_measured_ablation
+  budget_rule: largest_remainder_on_baseline_sink_weight
+  fill_order: ascending_target_sink_layer
+  skip_already_selected: true
+  redistribute_shortfall: global_measured_order
+  guarantees:
+    every_sink_layer_reachable: true
+    budget_sums_to_k: true
+
+fractions_percent: [0.01, 0.05, 0.10, 0.25, 0.50, 1.00]
+alphas: [1.00, 0.75, 0.50, 0.25, 0.00]
+
+controls:
+  primary: layer_count_matched_random
+  draws: 20
+  base_seed: 0
+  exclude_target_neurons: true
+  inherited_unchanged_from: neuron_sink.selection
+
+arms:
+  - id: A_primary
+    description: C3 method, full fraction x alpha grid, discovery/validation/locked test
+  - id: B_layer_ceiling
+    description: >
+      Registered layer baseline from docs/01_PHENOMENON_GATE.md. Attenuate the entire MLP
+      intermediate of each eligible layer, and of all eligible layers at once, across the
+      alpha grid and record per-sink-layer RSR. Discovery only. These are maximal
+      interventions, NOT upper bounds - suppression is not monotone in the sink, so a sparse
+      subset can exceed them. The only rigorous bound is reachable_metric_weight, which
+      follows from causal ordering alone.
+    cli: --layer-baseline
+  - id: C_abs_ranked_control
+    description: Stage-C absolute ranking on the same fresh blocks, alpha=0 only
+  - id: D_signed_only_control
+    description: Stage-C2 signed global top-k on the same fresh blocks, alpha=0 only
+  - id: E_gpt2_validation
+    description: Full C3 method on GPT-2-small, its own fresh window
+
+guards:
+  direction_guard: >
+    Before the intervention grid runs, the sum of each targeted set's MEASURED marginal sink
+    reductions must be positive. A failure aborts the run and is reported, never re-ranked
+    past. It is a sum of marginals, not a claim about the joint effect, which is measured
+    separately.
+  unpinned_corpus_refused: true
+  joint_vs_marginal_diagnostic: true
+
+gate:
+  scope: all_registered_sink_heavy_layers
+  minimum_relative_sink_reduction: 0.10
+  target_must_exceed_random_percentile: 95
+  bootstrap_ci_target_minus_random_lower_gt: 0.0
+  minimum_spearman_dose_response: 0.8
+  require_finite_outputs: true
+  note: >
+    Identical to the Stage-B/C/C2 gate. Nothing here is relaxed; the per-sink-layer budget is
+    what makes this metric reachable by the intervention.
+
+operating_point:
+  selection_split: validation
+  alpha: 0.0
+  minimum_relative_sink_reduction: 0.10
+  minimum_target_minus_median_random_rsr: 0.10
+  bootstrap_ci_lower_gt: 0.0
+  maximum_delta_ce: 0.10
+
+stop_conditions:
+  - A Stage-C3 null is a null; no further ranking, budget or selection change under this id.
+  - No neuron may be described as causal on the basis of attribution or ablation screening.
+  - If attenuating every eligible MLP layer at once barely moves a sink layer, report that
+    as strong evidence (not proof - suppression is not monotone) that the sink is not
+    MLP-mediated at that depth, and treat the attention-dimension extension as a separate
+    registered experiment rather than changing Stage C3 further.

@@ -331,6 +331,7 @@ def build_neutral_corpus(
     seed: int = REGISTERED_SEED,
     pool_size: int = FULL_SPLIT_SIZE * len(SPLIT_NAMES),
     purpose: str = str(REGISTERED_SOURCE["purpose"]),
+    skip_blocks: int = 0,
     cache_root: Path | None = None,
     train_documents: int | None = None,
     validation_documents: int | None = None,
@@ -340,12 +341,35 @@ def build_neutral_corpus(
     ``purpose="sink"`` is the original Stage-B/Stage-C block window. Amendment A005
     registers ``purpose="ppl"`` for Stage C2 so the same pinned upstream provider selects
     its guaranteed-disjoint block window. No other provider purpose is accepted here.
+
+    ``skip_blocks`` (amendment A007) reaches a *third* disjoint window without editing the
+    pinned provider. The provider offers only two offsets -- ``0`` for ``sink`` and
+    ``SINK_BLOCKS_RESERVED=300`` for ``ppl`` -- but ``ppl`` has no cap on ``n_blocks``, so
+    requesting ``pool_size + skip_blocks`` blocks and dropping the first ``skip_blocks``
+    yields global block indices ``[300 + skip_blocks, 300 + skip_blocks + pool_size)``.
+    Packing is a prefix operation, so the dropped prefix is byte-identical to the corpus a
+    smaller request would have produced, and Stage C2 stays exactly reproducible.
+
+    Two superficially similar routes are deliberately **not** used, because both give false
+    disjointness: a different ``seed`` reshuffles the *same* documents, and
+    ``train_documents``/``validation_documents`` change the document window without being
+    encoded in the upstream corpus id.
     """
 
     if purpose not in ("sink", "ppl"):
         raise CorpusError(
             f"Unsupported OpenWebText purpose {purpose!r}; expected 'sink' or 'ppl'"
         )
+    if isinstance(skip_blocks, bool) or not isinstance(skip_blocks, int):
+        raise TypeError(f"skip_blocks must be an integer, got {type(skip_blocks).__name__}")
+    if skip_blocks < 0:
+        raise CorpusError(f"skip_blocks must not be negative, got {skip_blocks}")
+    if skip_blocks and purpose != "ppl":
+        raise CorpusError(
+            "skip_blocks is only defined for purpose='ppl'; the 'sink' window is capped at "
+            "SINK_BLOCKS_RESERVED=300 blocks upstream and cannot be offset further"
+        )
+    requested_blocks = pool_size + skip_blocks
 
     assert_no_downstream_source(
         REGISTERED_SOURCE["dataset_id"], REGISTERED_SOURCE["corpus_id"]
@@ -354,7 +378,7 @@ def build_neutral_corpus(
     upstream_corpus = providers.openwebtext_corpus(
         tokenizer,
         REGISTERED_SOURCE["document_window"],
-        pool_size,
+        requested_blocks,
         block_size=cut_length,
         seed=seed,
         purpose=purpose,
@@ -364,23 +388,47 @@ def build_neutral_corpus(
     )
 
     window = REGISTERED_SOURCE["document_window"]
-    expected_id = f"openwebtext_{window}_{purpose}_{pool_size}"
-    if upstream_corpus.corpus_id != expected_id:
+    upstream_id = f"openwebtext_{window}_{purpose}_{requested_blocks}"
+    if upstream_corpus.corpus_id != upstream_id:
         raise CorpusError(
             f"Upstream returned corpus_id {upstream_corpus.corpus_id!r}, expected "
-            f"{expected_id!r}"
+            f"{upstream_id!r}"
         )
-    if len(upstream_corpus.items) != pool_size:
+    if len(upstream_corpus.items) != requested_blocks:
         raise CorpusError(
-            f"Upstream returned {len(upstream_corpus.items)} items, expected {pool_size}"
+            f"Upstream returned {len(upstream_corpus.items)} items, expected "
+            f"{requested_blocks}"
         )
-    for item in upstream_corpus.items:
+
+    # The project corpus id must describe the window this project actually keeps, so a
+    # 300-item C3 corpus can never be mistaken for the 600-block upstream request it was
+    # sliced out of.
+    expected_id = upstream_id if not skip_blocks else f"{upstream_id}_skip{skip_blocks}"
+    selected_items = list(upstream_corpus.items)[skip_blocks:]
+    if len(selected_items) != pool_size:
+        raise CorpusError(
+            f"Dropping {skip_blocks} blocks left {len(selected_items)} items, expected "
+            f"{pool_size}"
+        )
+    provider_offset = 0 if purpose == "sink" else 300
+    first_expected_block = provider_offset + skip_blocks
+    observed_blocks = [int(item.meta["block_index"]) for item in selected_items]
+    if observed_blocks != list(
+        range(first_expected_block, first_expected_block + pool_size)
+    ):
+        raise CorpusError(
+            f"Kept blocks {observed_blocks[:1]}..{observed_blocks[-1:]} but expected the "
+            f"contiguous window [{first_expected_block}, "
+            f"{first_expected_block + pool_size})"
+        )
+
+    for item in selected_items:
         if item.n_tokens != cut_length or len(item.input_ids) != cut_length:
             raise CorpusError(
                 f"{item.item_id} has {item.n_tokens} tokens, expected exactly {cut_length}"
             )
 
-    ordered_ids = [item.item_id for item in upstream_corpus.items]
+    ordered_ids = [item.item_id for item in selected_items]
     if len(set(ordered_ids)) != len(ordered_ids):
         raise CorpusError("Upstream corpus contains duplicate item ids")
     splits = assign_splits(ordered_ids, split_size=pool_size // len(SPLIT_NAMES))
@@ -395,7 +443,7 @@ def build_neutral_corpus(
             n_tokens=int(item.n_tokens),
             meta=dict(item.meta),
         )
-        for item in upstream_corpus.items
+        for item in selected_items
     )
 
     source = dict(REGISTERED_SOURCE)
@@ -403,9 +451,14 @@ def build_neutral_corpus(
     source["purpose"] = purpose
     source["n_blocks"] = pool_size
     source["block_size"] = cut_length
+    source["skip_blocks"] = skip_blocks
+    source["upstream_n_blocks"] = requested_blocks
+    source["block_index_window"] = [
+        first_expected_block, first_expected_block + pool_size
+    ]
     source["upstream_corpus_id"] = upstream_corpus.corpus_id
     return NeutralCorpus(
-        corpus_id=upstream_corpus.corpus_id,
+        corpus_id=expected_id,
         items=items,
         tokenizer_name=upstream_corpus.tokenizer_name,
         tokenizer_revision=upstream_corpus.tokenizer_revision,

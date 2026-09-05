@@ -7,8 +7,11 @@ Research repository for the next-stage attention-sink project: localize sink-ass
 **Stages A-C are complete. Stage B passed for both GPT-2 checkpoints, while the independent
 Qwen2.5-1.5B Stage C replication produced a valid model-specific null.** Amendment A005 registers
 Stage C2 as a separate positive-signed replication on fresh neutral blocks; its 20-example runtime
-preflight passes. Stage C remains unchanged, and Stage D stays blocked unless C2 passes its own
-locked held-out gate.
+preflight passes. Amendment A007 registers Stage C3, which additionally fixes the causal
+*reachability* defect found by decomposing the Stage-C result per sink layer: 41.1% of the graded
+metric was unreachable by the selected neurons, so a sign fix alone cannot clear the gate. Stage C
+remains unchanged, and Stage D stays blocked unless a checkpoint passes its own locked held-out
+gate.
 
 | Task | Status |
 |---|---|
@@ -22,6 +25,7 @@ locked held-out gate.
 | Stage B. Full 100/100/100 GPT-2-small and GPT-2-medium confirmation | PASS / PASS |
 | Stage C. Qwen2.5-1.5B independent replication | NULL / MODEL-NEGATIVE |
 | Stage C2. Fresh-corpus positive-signed Qwen replication | PREFLIGHT PASS / FULL RUN PENDING |
+| Stage C3. Reachability-aware localization (A007) | REGISTERED / IMPLEMENTED / NOT RUN |
 
 Stage B independently recomputed the discovery sink map, future-sink neuron ranking, and 20
 layer-count-matched controls for each checkpoint, selected the operating point from validation

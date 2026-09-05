@@ -75,6 +75,7 @@ from neuron_sink.provenance import (  # noqa: E402
 )
 from neuron_sink.selection import (  # noqa: E402
     CONDITION_ROW_FIELDS,
+    CONTROL_TYPE_TARGETED,
     CONTROL_RNG,
     CONTROL_SEED_DERIVATION,
     FULL_CONTROL_DRAWS,
@@ -85,6 +86,7 @@ from neuron_sink.selection import (  # noqa: E402
     build_neuron_sets_document,
     build_selection_conditions,
     condition_rows,
+    exact_k,
     load_frozen_attribution,
     load_frozen_neuron_sets,
 )
@@ -101,6 +103,7 @@ from neuron_sink.sink_metrics import (  # noqa: E402
     REGISTERED_SINK_FLOOR,
     REGISTERED_TARGET_POSITION,
     build_sink_scope,
+    differentiable_sink_scores_per_layer,
     layer_scores,
     load_frozen_sink_scope,
     per_layer_head_position0_attention,
@@ -138,6 +141,51 @@ from neuron_sink.stage_c2 import (  # noqa: E402
     unlock_test_split as unlock_stage_c2_test_split,
     verify_fresh_corpus as verify_stage_c2_fresh_corpus,
 )
+from neuron_sink.ablation_screen import (  # noqa: E402
+    ROW_FIELDS as SCREEN_ROW_FIELDS,
+    SCREEN_ALPHA,
+    SCREEN_METHOD,
+    baseline_per_layer_sink,
+    measure_joint_effect,
+    screen_neurons,
+)
+from neuron_sink.attribution_c3 import (  # noqa: E402
+    ATTRIBUTION_METHOD as C3_ATTRIBUTION_METHOD,
+    ATTRIBUTION_OBJECTIVE as C3_ATTRIBUTION_OBJECTIVE,
+    METRIC_DTYPE_NAME as C3_METRIC_DTYPE_NAME,
+    RANKING_SCORE as C3_RANKING_SCORE,
+    ROW_FIELDS as C3_ROW_FIELDS,
+    SCHEMA_VERSION as C3_ATTRIBUTION_SCHEMA,
+    attribution_rows as c3_attribution_rows,
+    attribution_sha256 as c3_attribution_sha256,
+    load_frozen_per_target_attribution,
+    rank_neurons_per_target,
+)
+from neuron_sink.layer_baseline import (  # noqa: E402
+    ROW_FIELDS as LAYER_CEILING_ROW_FIELDS,
+    ceiling_by_sink_layer,
+    layer_attenuation_ceiling,
+)
+from neuron_sink.selection_c3 import (  # noqa: E402
+    BUDGET_RULE as C3_BUDGET_RULE,
+    FILL_RULE as C3_FILL_RULE,
+    SELECTION_METHOD as C3_SELECTION_METHOD,
+    sink_layer_budget,
+    build_c3_neuron_sets_document,
+    build_c3_selection_conditions,
+    load_c3_neuron_sets,
+)
+from neuron_sink.stage_c3 import (  # noqa: E402
+    AMENDMENT as STAGE_C3_AMENDMENT,
+    EXPERIMENT_ID as STAGE_C3_EXPERIMENT_ID,
+    build_operating_point_document as build_stage_c3_operating_point,
+    evaluate_formal_gate as evaluate_stage_c3_gate,
+    freeze_operating_point as freeze_stage_c3_operating_point,
+    registered_window as stage_c3_registered_window,
+    stage_c3_run_root,
+    unlock_test_split as unlock_stage_c3_test_split,
+    verify_fresh_corpus as verify_stage_c3_fresh_corpus,
+)
 from neuron_sink.suppression import NeuronSet, suppress_neurons  # noqa: E402
 from neuron_sink.upstream_bridge import sink_repro_module  # noqa: E402
 
@@ -159,6 +207,20 @@ QWEN_C2_FROZEN_MANIFEST = (
 )
 QWEN_C2_CORPUS_SHA256 = (
     "dc9d6e8494923a6462cbd22882bfe0ccf87435525940315e97bdae858dabe8ab"
+)
+QWEN_C3_FROZEN_MANIFEST = (
+    ROOT / "configs" / "frozen" / "qwen2_5_1_5b_instruct_c3" /
+    "neutral_corpus_manifest.json"
+)
+GPT2_C3_FROZEN_MANIFEST = (
+    ROOT / "configs" / "frozen" / "gpt2_small_c3" / "neutral_corpus_manifest.json"
+)
+#: Amendment A007 pins each Stage-C3 corpus by hash exactly as the earlier stages do. The
+#: values are empty until the corpora are built, and ``_run`` refuses to start without them,
+#: so a Stage-C3 run can never be pointed at an unpinned manifest.
+QWEN_C3_CORPUS_SHA256 = ""
+GPT2_C3_CORPUS_SHA256 = (
+    "cf4c33e1447c12fd1e7a6931757f433f0cc87f9adaeb8f9a3504c42ce011fc28"
 )
 
 
@@ -255,7 +317,67 @@ MODEL_SPECS: Mapping[str, ModelSpec] = {
         selection_method=SIGNED_SELECTION_METHOD,
         ranking_score=SIGNED_RANKING_SCORE,
     ),
+    "qwen2.5-1.5b-instruct-c3": ModelSpec(
+        alias="qwen2.5-1.5b-instruct",
+        stage="stage_c3",
+        architecture="qwen2",
+        model_id="Qwen/Qwen2.5-1.5B-Instruct",
+        revision="989aa7980e4cf806f80c7fef2b1adb7bc71aa306",
+        tokenizer_id="Qwen/Qwen2.5-1.5B-Instruct",
+        tokenizer_revision="989aa7980e4cf806f80c7fef2b1adb7bc71aa306",
+        dtype="bfloat16",
+        frozen_manifest=QWEN_C3_FROZEN_MANIFEST,
+        corpus_sha256=QWEN_C3_CORPUS_SHA256,
+        experiment_id=STAGE_C3_EXPERIMENT_ID,
+        expected_layers=28,
+        expected_width=8960,
+        neuron_hook_point="model.layers[layer].mlp.down_proj input",
+        selection_method=C3_SELECTION_METHOD,
+        ranking_score=C3_RANKING_SCORE,
+    ),
+    # GPT-2-small is the Stage-C3 method-validation control: a checkpoint already known to
+    # pass, so a method that cannot reproduce its effect is at fault before any Qwen number
+    # is interpreted.
+    "gpt2-small-c3": ModelSpec(
+        alias="gpt2-small",
+        stage="stage_c3",
+        architecture="gpt2",
+        model_id="openai-community/gpt2",
+        revision="607a30d783dfa663caf39e06633721c8d4cfcd7e",
+        tokenizer_id="openai-community/gpt2",
+        tokenizer_revision="607a30d783dfa663caf39e06633721c8d4cfcd7e",
+        dtype="float32",
+        frozen_manifest=GPT2_C3_FROZEN_MANIFEST,
+        corpus_sha256=GPT2_C3_CORPUS_SHA256,
+        experiment_id=f"{STAGE_C3_EXPERIMENT_ID}_gpt2_small",
+        expected_layers=12,
+        expected_width=3072,
+        neuron_hook_point="transformer.h[layer].mlp.c_proj input",
+        selection_method=C3_SELECTION_METHOD,
+        ranking_score=C3_RANKING_SCORE,
+    ),
 }
+
+#: Stages whose discovery side uses the amendment-A007 per-target pipeline.
+C3_STAGES = frozenset({"stage_c3"})
+
+#: Side artefact written alongside per_example.csv for Stage C3. Kept separate because
+#: PHENOMENON_ROW_FIELDS is a closed schema shared with Stage B/C/C2 and _read_phenomenon_csv
+#: enforces its field names exactly.
+PER_LAYER_SINK_ROW_FIELDS: tuple[str, ...] = (
+    "stage",
+    "example_id",
+    "condition_id",
+    "control_type",
+    "fraction_percent",
+    "k",
+    "alpha",
+    "sink_layer",
+    "sink_baseline",
+    "sink_intervened",
+    "delta_sink",
+    "relative_sink_reduction",
+)
 
 
 def _parse_args() -> argparse.Namespace:
@@ -314,6 +436,21 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument(
+        "--layer-baseline", action="store_true",
+        help="Stage C3 arm B: whole-MLP attenuation ceiling on discovery, then stop. This "
+             "is the registered layer baseline in docs/01_PHENOMENON_GATE.md and bounds "
+             "what any neuron subset of a layer can achieve.",
+    )
+    parser.add_argument(
+        "--screen-examples", type=int, default=20,
+        help="Stage C3: discovery examples used for the measured-ablation rerank.",
+    )
+    parser.add_argument(
+        "--shortlist-per-target", type=int, default=0,
+        help="Stage C3: candidates screened per target sink layer. 0 selects the registered "
+             "automatic size, three times the largest per-target quota, capped at 2000.",
+    )
     parser.add_argument("--progress-every", type=int, default=5)
     args = parser.parse_args()
     if args.max_examples is not None and not 20 <= args.max_examples < FULL_SPLIT_SIZE:
@@ -333,11 +470,19 @@ def _parse_args() -> argparse.Namespace:
     if args.resume_after_discovery and MODEL_SPECS[args.model].stage != "stage_c2":
         parser.error("--resume-after-discovery is registered only for Stage C2")
     if args.baseline_preflight and MODEL_SPECS[args.model].stage not in (
-        "stage_c", "stage_c2"
+        "stage_c", "stage_c2", "stage_c3"
     ):
-        parser.error("--baseline-preflight is registered only for Stage C/C2")
+        parser.error("--baseline-preflight is registered only for Stage C/C2/C3")
+    if args.layer_baseline and MODEL_SPECS[args.model].stage != "stage_c3":
+        parser.error("--layer-baseline is registered only for Stage C3")
+    if args.layer_baseline and (args.baseline_preflight or args.resume_after_validation):
+        parser.error("--layer-baseline cannot be combined with another run mode")
+    if args.screen_examples < 4:
+        parser.error("--screen-examples must be at least 4")
+    if args.shortlist_per_target < 0:
+        parser.error("--shortlist-per-target must be non-negative")
     if args.seed != 0:
-        parser.error("Stages B, C, and C2 have registered seed 0")
+        parser.error("Stages B, C, C2 and C3 have registered seed 0")
     if args.progress_every < 0:
         parser.error("--progress-every must be non-negative")
     return args
@@ -417,6 +562,14 @@ def _stage_api(spec: ModelSpec) -> tuple[Any, Any, Any, Any, Any]:
             unlock_stage_c2_test_split,
             evaluate_stage_c2_gate,
             stage_c2_run_root,
+        )
+    if spec.stage == "stage_c3":
+        return (
+            build_stage_c3_operating_point,
+            freeze_stage_c3_operating_point,
+            unlock_stage_c3_test_split,
+            evaluate_stage_c3_gate,
+            stage_c3_run_root,
         )
     raise AssertionError(f"Unsupported registered stage {spec.stage!r}")
 
@@ -736,6 +889,365 @@ def _run_attribution(
     return ranking, checks
 
 
+def _run_layer_ceiling(
+    model: torch.nn.Module,
+    adapter: MLPModelAdapter,
+    items: Sequence[Any],
+    scope: Any,
+    output_dir: Path,
+    *,
+    progress_every: int,
+) -> dict[str, Any]:
+    """Stage C3 arm B: whole-MLP attenuation ceiling per eligible layer."""
+
+    started = time.perf_counter()
+
+    def progress(done: int, total: int) -> None:
+        if progress_every > 0 and (done == 1 or done % progress_every == 0):
+            print(f"  layer ceiling [{done}/{total}]", flush=True)
+
+    document = layer_attenuation_ceiling(
+        model,
+        adapter,
+        items,
+        list(scope.eligible_mlp_layers),
+        list(scope.sink_layers),
+        alphas=FULL_ALPHAS,
+        device=model.device,
+        progress=progress,
+    )
+    document["runtime_seconds"] = time.perf_counter() - started
+    document["ceiling_at_full_suppression"] = ceiling_by_sink_layer(document, alpha=0.0)
+    _write_csv(
+        output_dir / "layer_attenuation_ceiling.csv",
+        document["rows"],
+        LAYER_CEILING_ROW_FIELDS,
+    )
+    _write_new_json(output_dir / "layer_attenuation_ceiling.json", document)
+    return document
+
+
+def _run_attribution_c3(
+    model: torch.nn.Module,
+    adapter: MLPModelAdapter,
+    spec: ModelSpec,
+    corpus: NeutralCorpus,
+    items: Sequence[Any],
+    scope: Any,
+    output_dir: Path,
+    *,
+    progress_every: int,
+) -> tuple[Any, dict[str, Any]]:
+    """Amendment-A007 per-target attribution: one gradient per reachable sink layer."""
+
+    started = time.perf_counter()
+    eligible = list(scope.eligible_mlp_layers)
+    probe_ids = torch.tensor(
+        [list(items[0].input_ids)], dtype=torch.long, device=model.device
+    )
+    causal_probe: list[dict[str, Any]] = []
+    for layer in eligible:
+        targets = list(scope.targets_for(layer))
+        earlier = [target for target in scope.sink_layers if target <= layer]
+        causal_probe.append({
+            "mlp_layer": layer,
+            "future_targets": targets,
+            "future_targets_depend": objective_depends_on_layer(
+                model, adapter, probe_ids, layer, targets
+            ),
+            "same_layer_depends": objective_depends_on_layer(
+                model, adapter, probe_ids, layer, [layer]
+            ),
+            "earlier_sink_layers": earlier,
+            "earlier_sink_depends": (
+                objective_depends_on_layer(model, adapter, probe_ids, layer, earlier)
+                if earlier else None
+            ),
+        })
+    del probe_ids
+    causal_order_pass = all(
+        record["future_targets_depend"] is True
+        and record["same_layer_depends"] is False
+        and record["earlier_sink_depends"] in (False, None)
+        for record in causal_probe
+    )
+
+    def progress(layer: int, done: int, total: int) -> None:
+        if progress_every > 0 and (done == 1 or done % progress_every == 0):
+            print(f"  attribution layer {layer} [{done}/{total}]", flush=True)
+
+    result = rank_neurons_per_target(
+        model,
+        adapter,
+        corpus,
+        {layer: scope.targets_for(layer) for layer in eligible},
+        split="discovery",
+        smoke=False,
+        max_examples=None if len(items) == FULL_SPLIT_SIZE else len(items),
+        device=model.device,
+        progress=progress,
+    )
+    rows = c3_attribution_rows(result)
+    rows_hash = c3_attribution_sha256(rows)
+    widths = {layer: adapter.mlp_width(layer) for layer in eligible}
+    per_pair = [pair.diagnostics() for pair in result.pairs]
+
+    checks = {
+        "causal_order_pass": causal_order_pass,
+        "gradient_pass": all(
+            pair.nonfinite_values == 0
+            and pair.zero_gradient_examples == 0
+            and pair.max_abs_gradient > 0.0
+            for pair in result.pairs
+        ),
+        "rows_pass": len(rows) == sum(
+            widths[layer] * len(scope.targets_for(layer)) for layer in eligible
+        ),
+        "positive_signed_rows": sum(
+            1 for row in rows if row["mean_signed_attr"] > 0.0
+        ),
+        "negative_signed_rows": sum(
+            1 for row in rows if row["mean_signed_attr"] < 0.0
+        ),
+    }
+    metadata = {
+        "schema": C3_ATTRIBUTION_SCHEMA,
+        "experiment_id": spec.experiment_id,
+        "amendment": STAGE_C3_AMENDMENT,
+        "stage": "discovery",
+        "model_id": spec.model_id,
+        "model_revision": spec.revision,
+        "dtype": spec.dtype,
+        "metric_dtype": C3_METRIC_DTYPE_NAME,
+        "corpus_id": corpus.corpus_id,
+        "corpus_manifest_sha256": corpus.manifest_sha256,
+        "sink_scope_sha256": scope.sink_scope_sha256,
+        "split": "discovery",
+        "split_mode": "full_100" if len(items) == FULL_SPLIT_SIZE else "dry_run_prefix",
+        "n_examples": len(items),
+        "seq_len": corpus.cut_length,
+        "example_ids": list(result.example_ids),
+        "neuron_definition": "mlp_intermediate_pre_output_projection",
+        "neuron_hook_point": spec.neuron_hook_point,
+        "attribution_method": C3_ATTRIBUTION_METHOD,
+        "attribution_objective": C3_ATTRIBUTION_OBJECTIVE,
+        "token_position_rule": TOKEN_POSITION_RULE,
+        "ranking_score": C3_RANKING_SCORE,
+        "sink_target_position": REGISTERED_TARGET_POSITION,
+        "sink_query_rule": REGISTERED_QUERY_RULE,
+        "sink_layers": list(scope.sink_layers),
+        "sink_heads_used": "all_heads",
+        "eligible_mlp_layers": eligible,
+        "future_sink_layers": {
+            str(layer): list(scope.targets_for(layer)) for layer in eligible
+        },
+        "mlp_width": {str(layer): widths[layer] for layer in eligible},
+        "n_rows": len(rows),
+        "row_fields": list(C3_ROW_FIELDS),
+        "attribution_sha256": rows_hash,
+        "per_pair": per_pair,
+        "causal_order_probe": causal_probe,
+        "checks": checks,
+        "runtime_seconds": time.perf_counter() - started,
+        "is_causal_evidence": False,
+    }
+    csv_path = output_dir / "neuron_attribution_c3.csv"
+    metadata_path = output_dir / "neuron_attribution_c3_metadata.json"
+    _write_csv(csv_path, rows, C3_ROW_FIELDS)
+    _write_new_json(metadata_path, metadata)
+    ranking = load_frozen_per_target_attribution(
+        csv_path,
+        metadata_path,
+        scope=scope,
+        expected_corpus_manifest_sha256=corpus.manifest_sha256,
+    )
+    return ranking, checks
+
+
+def _run_screen(
+    model: torch.nn.Module,
+    adapter: MLPModelAdapter,
+    ranking: Any,
+    scope: Any,
+    items: Sequence[Any],
+    output_dir: Path,
+    *,
+    screen_examples: int,
+    shortlist_per_target: int,
+    progress_every: int,
+) -> tuple[Any, dict[str, Any]]:
+    """Rerank the gradient shortlist by directly measured alpha=0 ablation."""
+
+    started = time.perf_counter()
+    screen_items = list(items)[:screen_examples]
+    baseline = baseline_per_layer_sink(
+        model, screen_items, list(scope.sink_layers), device=model.device
+    )
+    # The shortlist has to be at least as large as the biggest quota any sink layer will be
+    # asked to fill, with headroom for candidates already taken by an earlier target. Size it
+    # from the real metric weights, which is what the budget will actually use.
+    largest_k = max(exact_k(f, ranking.pool_size) for f in FULL_FRACTIONS_PERCENT)
+    largest_quota = max(
+        sink_layer_budget(
+            largest_k,
+            list(scope.sink_layers),
+            [float(value) for value in baseline.mean(axis=0)],
+        ).values()
+    )
+    size = shortlist_per_target or min(2000, 3 * largest_quota)
+
+    shortlist: set[tuple[int, int]] = set()
+    predicted: dict[tuple[int, int, int], float] = {}
+    per_target_available: dict[str, int] = {}
+    for target in scope.sink_layers:
+        candidates = ranking.candidates_for_target(target)
+        per_target_available[str(target)] = len(candidates)
+        for row in candidates[:size]:
+            key = (int(row["mlp_layer"]), int(row["neuron"]))
+            shortlist.add(key)
+            predicted[(key[0], key[1], int(target))] = float(row[C3_RANKING_SCORE])
+
+    print(
+        f"Screening {len(shortlist)} candidates x {len(screen_items)} examples "
+        f"(shortlist {size} per target)",
+        flush=True,
+    )
+
+    def progress(done: int, total: int) -> None:
+        if progress_every > 0 and (done == 1 or done % (progress_every * 20) == 0):
+            print(f"  screen [{done}/{total}]", flush=True)
+
+    screen = screen_neurons(
+        model,
+        adapter,
+        screen_items,
+        sorted(shortlist),
+        list(scope.sink_layers),
+        baseline=baseline,
+        predicted=predicted,
+        device=model.device,
+        progress=progress,
+    )
+    diagnostics = {
+        "schema": "ablation_screen_c3_v1",
+        "screen_method": SCREEN_METHOD,
+        "alpha": SCREEN_ALPHA,
+        "n_examples": len(screen_items),
+        "example_ids": [item.item_id for item in screen_items],
+        "shortlist_per_target": size,
+        "candidates_screened": screen.n_candidates,
+        "rows": len(screen.rows),
+        "positive_candidates_available": per_target_available,
+        "measured_positive_rows": sum(
+            1 for row in screen.rows if row["measured_delta_sink"] > 0.0
+        ),
+        "baseline_sink_per_layer": list(screen.baseline_per_layer),
+        "screen_sha256": screen.sha256(),
+        "runtime_seconds": time.perf_counter() - started,
+        # How often the first-order score agreed with the measured direction. A low value is
+        # the quantitative case for screening rather than trusting the gradient alone.
+        "sign_agreement_rate": (
+            sum(
+                1 for row in screen.rows
+                if np.isfinite(row["predicted_delta_sink"])
+                and (row["predicted_delta_sink"] > 0) == (row["measured_delta_sink"] > 0)
+            ) / max(sum(
+                1 for row in screen.rows if np.isfinite(row["predicted_delta_sink"])
+            ), 1)
+        ),
+    }
+    _write_csv(output_dir / "ablation_screen.csv", list(screen.rows), SCREEN_ROW_FIELDS)
+    _write_new_json(output_dir / "ablation_screen.json", diagnostics)
+    return screen, diagnostics
+
+
+def _select_full_grid_c3(
+    ranking: Any,
+    screen: Any,
+    output_dir: Path,
+    *,
+    experiment_id: str,
+) -> tuple[Any, tuple[FullCondition, ...], dict[str, Any]]:
+    """Per-sink-layer budgeted selection with the unchanged matched-random controls."""
+
+    conditions, diagnostics = build_c3_selection_conditions(
+        ranking,
+        screen,
+        FULL_FRACTIONS_PERCENT,
+        control_draws=FULL_CONTROL_DRAWS,
+        base_seed=REGISTERED_BASE_SEED,
+    )
+    document = build_c3_neuron_sets_document(
+        ranking,
+        conditions,
+        screen,
+        diagnostics,
+        fractions_percent=FULL_FRACTIONS_PERCENT,
+        control_draws=FULL_CONTROL_DRAWS,
+        base_seed=REGISTERED_BASE_SEED,
+        experiment_id=experiment_id,
+    )
+    json_path = output_dir / "neuron_sets.json"
+    _write_new_json(json_path, document)
+    _write_csv(
+        output_dir / "neuron_sets.csv", condition_rows(conditions), CONDITION_ROW_FIELDS
+    )
+    frozen = load_c3_neuron_sets(json_path)
+    return frozen, registered_full_conditions(frozen), diagnostics
+
+
+def _first_order_guard(
+    conditions: Sequence[FullCondition], diagnostics: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Refuse to spend the grid on a set whose own measurements point the wrong way.
+
+    Stage C spent 100 GPU-minutes on target sets that its own discovery scores predicted
+    would *increase* the sink. This check costs milliseconds and would have caught it. The
+    quantity is the sum of the selected neurons' measured marginal reductions, so it is a
+    stronger statement than the first-order sign; it is still a sum of marginals and is not
+    a claim about the joint effect.
+    """
+
+    targeted = [
+        condition for condition in conditions
+        if condition.control_type == CONTROL_TYPE_TARGETED
+    ]
+    missing = [
+        condition.condition_id for condition in targeted
+        if condition.condition_id.replace("targeted_", "") not in diagnostics
+    ]
+    if missing:
+        raise RuntimeError(
+            f"Stage-C3 first-order guard has no selection diagnostics for {missing}; "
+            "every targeted condition must be checked before the grid runs."
+        )
+
+    records = []
+    for label, entry in sorted(diagnostics.items()):
+        predicted = float(entry["sum_measured_marginal_delta_sink"])
+        records.append({
+            "fraction_label": label,
+            "sum_measured_marginal_delta_sink": predicted,
+            "direction_pass": predicted > 0.0,
+            "unreachable_sink_layers": entry["unreachable_sink_layers"],
+            "reachable_metric_weight": entry["reachable_metric_weight"],
+        })
+    failures = [record for record in records if not record["direction_pass"]]
+    guard = {
+        "targeted_conditions": len(targeted),
+        "checked_conditions": len(records),
+        "records": records,
+        "first_order_direction_pass": not failures,
+    }
+    if failures:
+        raise RuntimeError(
+            "Stage-C3 first-order guard failed: "
+            f"{[record['fraction_label'] for record in failures]} are predicted to increase "
+            "the sink under suppression. Stop and report; do not re-rank to get past this."
+        )
+    return guard
+
+
 def _select_full_grid(
     ranking: Any,
     output_dir: Path,
@@ -791,6 +1303,8 @@ def _load_stage_neuron_sets(
 
     if spec.stage == "stage_c2":
         return load_signed_neuron_sets(path, ranking=ranking)
+    if spec.stage in C3_STAGES:
+        return load_c3_neuron_sets(path)
     return load_frozen_neuron_sets(path)
 
 
@@ -870,10 +1384,17 @@ def _evaluate_split(
     progress_every: int,
     reference: Any | None,
     reference_ids: torch.Tensor | None,
+    per_layer_sink: bool = False,
 ) -> dict[str, Any]:
     """Evaluate one complete split while retaining no vocabulary logits across forwards."""
 
     rows: list[dict[str, Any]] = []
+    # Stage C3 records the sink at every registered layer, not only their mean. The Stage-C
+    # null was only diagnosable once that decomposition existed, so C3 emits it by default.
+    # ForwardSnapshot already retains the per-layer attentions, so this costs no extra
+    # forward; it is written to its own file because PHENOMENON_ROW_FIELDS is a closed
+    # schema shared with Stage B/C/C2.
+    per_layer_rows: list[dict[str, Any]] = []
     forward_count = 0
     identity_pass = True
     validity_pass = True
@@ -954,6 +1475,35 @@ def _evaluate_split(
                             f"Hook leakage after {condition.condition_id}, layer {layer}"
                         )
                 metrics = paired_metrics(baseline, intervention)
+                if per_layer_sink:
+                    with torch.inference_mode():
+                        base_layers = differentiable_sink_scores_per_layer(
+                            baseline.attentions, list(scope.sink_layers),
+                            dtype=torch.float32,
+                        ).to(torch.float64).cpu().numpy()
+                        intervened_layers = differentiable_sink_scores_per_layer(
+                            intervention.attentions, list(scope.sink_layers),
+                            dtype=torch.float32,
+                        ).to(torch.float64).cpu().numpy()
+                    for position, sink_layer in enumerate(scope.sink_layers):
+                        base_value = float(base_layers[position])
+                        intervened_value = float(intervened_layers[position])
+                        per_layer_rows.append({
+                            "stage": stage,
+                            "example_id": item.item_id,
+                            "condition_id": condition.condition_id,
+                            "control_type": condition.control_type,
+                            "fraction_percent": condition.fraction_percent,
+                            "k": condition.k,
+                            "alpha": alpha,
+                            "sink_layer": int(sink_layer),
+                            "sink_baseline": base_value,
+                            "sink_intervened": intervened_value,
+                            "delta_sink": intervened_value - base_value,
+                            "relative_sink_reduction": (
+                                (base_value - intervened_value) / max(base_value, 1e-12)
+                            ),
+                        })
                 row = _row(
                     experiment_id=experiment_id,
                     model_id=spec.model_id,
@@ -986,6 +1536,12 @@ def _evaluate_split(
         rows, allowed_stages=(stage,), allowed_alphas=FULL_ALPHAS
     )
     _write_csv(output_dir / "per_example.csv", rows, PHENOMENON_ROW_FIELDS)
+    if per_layer_sink and per_layer_rows:
+        _write_csv(
+            output_dir / "per_layer_sink.csv",
+            per_layer_rows,
+            PER_LAYER_SINK_ROW_FIELDS,
+        )
     _write_csv(output_dir / "aggregate.csv", aggregates, AGGREGATE_FIELDS)
     _write_new_json(output_dir / "aggregate.json", {
         "stage": stage,
@@ -1544,8 +2100,10 @@ def _resume_after_validation(
 ) -> int:
     """Verify a stopped run and continue only its still-locked Qwen test phase."""
 
-    if spec.stage not in ("stage_c", "stage_c2"):
-        raise RuntimeError("Exact after-validation resume is registered only for Stage C/C2")
+    if spec.stage not in ("stage_c", "stage_c2", "stage_c3"):
+        raise RuntimeError(
+            "Exact after-validation resume is registered only for Stage C/C2/C3"
+        )
     for relative in ("operating_point.json", "formal_gate.json", "provenance.json", "summary.json"):
         if (output_dir / relative).exists():
             raise FileExistsError(
@@ -1840,6 +2398,13 @@ def _run(args: argparse.Namespace, output_dir: Path) -> int:
     recorder = ProvenanceRecorder(device=device, gpu_name=gpu_name)
     _set_determinism(args.seed)
 
+    if not spec.corpus_sha256:
+        raise RuntimeError(
+            f"{args.model} has no pinned corpus hash yet. Build its Stage-C3 corpus with "
+            "scripts/prepare_neutral_corpus.py, then pin the manifest_sha256 in "
+            "run_full_phenomenon.py before any registered run. Amendment A007 requires the "
+            "corpus to be frozen and hash-pinned before measurement."
+        )
     corpus = NeutralCorpus.load(manifest_path)
     if corpus.manifest_sha256 != spec.corpus_sha256:
         raise RuntimeError(
@@ -1857,6 +2422,22 @@ def _run(args: argparse.Namespace, output_dir: Path) -> int:
     if spec.stage == "stage_c2":
         stage_c_corpus = NeutralCorpus.load(QWEN_FROZEN_MANIFEST)
         fresh_corpus_checks = verify_stage_c2_fresh_corpus(corpus, stage_c_corpus)
+    elif spec.stage == "stage_c3":
+        # Disjointness is proved against every corpus this checkpoint has already inspected,
+        # not just the most recent one: Qwen has consumed both the Stage-C and Stage-C2
+        # windows, GPT-2-small only the Stage-B one.
+        if spec.alias == "qwen2.5-1.5b-instruct":
+            predecessors = [
+                NeutralCorpus.load(QWEN_FROZEN_MANIFEST),
+                NeutralCorpus.load(QWEN_C2_FROZEN_MANIFEST),
+            ]
+        elif spec.alias == "gpt2-small":
+            predecessors = [NeutralCorpus.load(GPT2_FROZEN_MANIFEST)]
+        else:
+            raise AssertionError(f"Unregistered Stage-C3 alias {spec.alias!r}")
+        fresh_corpus_checks = verify_stage_c3_fresh_corpus(
+            corpus, predecessors, model_alias=spec.alias
+        )
     discovery_items = list(corpus.items_for("discovery", smoke=False))[:n_examples]
     validation_items = list(corpus.items_for("validation", smoke=False))[:n_examples]
     if len(discovery_items) != n_examples or len(validation_items) != n_examples:
@@ -1976,7 +2557,7 @@ def _run(args: argparse.Namespace, output_dir: Path) -> int:
         provenance["repo_status_at_run"] = repo_status.splitlines()
         per_layer_sink = example_maps.mean(axis=(0, 2))
         summary = {
-            "stage_c_baseline_preflight": "PASS",
+            f"{spec.stage}_baseline_preflight": "PASS",
             "model_alias": spec.alias,
             "model_id": spec.model_id,
             "model_revision": spec.revision,
@@ -2052,32 +2633,149 @@ def _run(args: argparse.Namespace, output_dir: Path) -> int:
         })
         _write_new_json(output_dir / "provenance.json", provenance)
         _write_new_json(output_dir / "summary.json", summary)
-        print("STAGE_C_BASELINE_PREFLIGHT=PASS", flush=True)
+        print(f"{spec.stage.upper()}_BASELINE_PREFLIGHT=PASS", flush=True)
         print(f"maximum_layer_sink={summary['maximum_layer_sink']:.9f}", flush=True)
         print(f"sink_layers={summary['sink_layers']}", flush=True)
         print(f"output_dir={output_dir}", flush=True)
         return 0
+    if args.layer_baseline:
+        print(
+            f"Arm B: whole-MLP attenuation ceiling over layers "
+            f"{list(scope.eligible_mlp_layers)}",
+            flush=True,
+        )
+        ceiling = _run_layer_ceiling(
+            model,
+            adapter,
+            discovery_items,
+            scope,
+            discovery_dir,
+            progress_every=args.progress_every,
+        )
+        provenance = recorder.finish(
+            repo_commit=repo_commit, submodule_commits=submodule_commits
+        )
+        _write_new_json(output_dir / "provenance.json", provenance)
+        _write_new_json(output_dir / "run_config.json", {
+            "experiment_id": experiment_id,
+            "amendment": STAGE_C3_AMENDMENT,
+            "stage": "discovery_layer_attenuation_ceiling",
+            "run_mode": "registered_layer_baseline_100",
+            "registered_run": False,
+            "test_split_access_allowed": False,
+            "model_alias": spec.alias,
+            "model_id": spec.model_id,
+            "model_revision": spec.revision,
+            "dtype": spec.dtype,
+            "manifest_sha256": corpus.manifest_sha256,
+            "sink_scope_sha256": scope.sink_scope_sha256,
+            "examples_per_split": len(discovery_items),
+            "alphas": list(FULL_ALPHAS),
+            "method": "whole_mlp_intermediate_attenuation",
+        })
+        _write_new_json(output_dir / "summary.json", {
+            f"{spec.stage}_layer_baseline": "PASS",
+            "causal_order_pass": ceiling["causal_order_pass"],
+            "sink_layers": list(scope.sink_layers),
+            "eligible_mlp_layers": list(scope.eligible_mlp_layers),
+            "baseline_sink_per_layer": ceiling["baseline_sink_per_layer"],
+            "ceiling_at_full_suppression": ceiling["ceiling_at_full_suppression"],
+            "layer_baseline_sha256": ceiling["layer_baseline_sha256"],
+            "attribution_run": False,
+            "selection_run": False,
+            "intervention_grid_run": False,
+            "test_split_accessed": False,
+            "is_causal_evidence": False,
+            "fresh_corpus_checks": fresh_corpus_checks,
+        })
+        print(f"{spec.stage.upper()}_LAYER_BASELINE=PASS", flush=True)
+        for entry in ceiling["ceiling_at_full_suppression"]["per_sink_layer"]:
+            print(
+                f"  sink layer {entry['target_sink_layer']:>2}: best whole-MLP RSR "
+                f"{entry['best_rsr'] * 100:7.3f}% from MLP layer {entry['best_mlp_layer']}",
+                flush=True,
+            )
+        print(f"output_dir={output_dir}", flush=True)
+        return 0
+
     print(
         f"Discovery: attribution over eligible layers {list(scope.eligible_mlp_layers)}",
         flush=True,
     )
-    ranking, attribution_checks = _run_attribution(
-        model,
-        adapter,
-        spec,
-        corpus,
-        discovery_items,
-        scope,
-        example_maps,
-        discovery_dir,
-        progress_every=args.progress_every,
-    )
-    frozen_sets, conditions = _select_full_grid(
-        ranking,
-        discovery_dir,
-        experiment_id=experiment_id,
-        signed=spec.stage == "stage_c2",
-    )
+    screen_diagnostics: dict[str, Any] | None = None
+    selection_diagnostics: dict[str, Any] | None = None
+    first_order_guard: dict[str, Any] | None = None
+    joint_effect: dict[str, Any] | None = None
+    if spec.stage in C3_STAGES:
+        ranking, attribution_checks = _run_attribution_c3(
+            model,
+            adapter,
+            spec,
+            corpus,
+            discovery_items,
+            scope,
+            discovery_dir,
+            progress_every=args.progress_every,
+        )
+        screen, screen_diagnostics = _run_screen(
+            model,
+            adapter,
+            ranking,
+            scope,
+            discovery_items,
+            discovery_dir,
+            screen_examples=args.screen_examples,
+            shortlist_per_target=args.shortlist_per_target,
+            progress_every=args.progress_every,
+        )
+        frozen_sets, conditions, selection_diagnostics = _select_full_grid_c3(
+            ranking,
+            screen,
+            discovery_dir,
+            experiment_id=experiment_id,
+        )
+        # Cheap, and it is exactly the check Stage C lacked.
+        first_order_guard = _first_order_guard(conditions, selection_diagnostics)
+        # Marginal screening ignores interactions; measure the assembled set once so the
+        # report can state how much redundancy it carries instead of assuming additivity.
+        largest = max(
+            (c for c in conditions if c.control_type == CONTROL_TYPE_TARGETED),
+            key=lambda condition: condition.k,
+        )
+        joint_effect = measure_joint_effect(
+            model,
+            adapter,
+            list(discovery_items)[:args.screen_examples],
+            largest.neuron_set,
+            list(scope.sink_layers),
+            device=model.device,
+        )
+        joint_effect["condition_id"] = largest.condition_id
+        joint_effect["k"] = largest.k
+        joint_effect["sum_of_marginals"] = float(
+            selection_diagnostics[
+                largest.condition_id.replace("targeted_", "")
+            ]["sum_measured_marginal_delta_sink"]
+        )
+        _write_new_json(discovery_dir / "joint_effect.json", joint_effect)
+    else:
+        ranking, attribution_checks = _run_attribution(
+            model,
+            adapter,
+            spec,
+            corpus,
+            discovery_items,
+            scope,
+            example_maps,
+            discovery_dir,
+            progress_every=args.progress_every,
+        )
+        frozen_sets, conditions = _select_full_grid(
+            ranking,
+            discovery_dir,
+            experiment_id=experiment_id,
+            signed=spec.stage == "stage_c2",
+        )
     for condition in conditions:
         adapter.validate_neuron_set(condition.neuron_set)
 
@@ -2128,11 +2826,21 @@ def _run(args: argparse.Namespace, output_dir: Path) -> int:
         "attribution_objective": ATTRIBUTION_OBJECTIVE,
         "ranking_score": spec.ranking_score,
         "ranking_sign_requirement": (
-            "strictly_positive" if spec.stage == "stage_c2" else None
+            "strictly_positive"
+            if spec.stage in ("stage_c2",) | C3_STAGES
+            else None
         ),
         "positive_signed_score_count": (
             positive_score_count(ranking) if spec.stage == "stage_c2" else None
         ),
+        "amendment": STAGE_C3_AMENDMENT if spec.stage in C3_STAGES else None,
+        "budget_rule": C3_BUDGET_RULE if spec.stage in C3_STAGES else None,
+        "fill_rule": C3_FILL_RULE if spec.stage in C3_STAGES else None,
+        "metric_dtype": (
+            C3_METRIC_DTYPE_NAME if spec.stage in C3_STAGES else spec.dtype
+        ),
+        "screen": screen_diagnostics,
+        "first_order_guard": first_order_guard,
         "attribution_sha256": ranking.attribution_sha256,
         "neuron_sets_sha256": frozen_sets.document["neuron_sets_sha256"],
         "neuron_sets_file": "discovery/neuron_sets.json",
@@ -2190,6 +2898,7 @@ def _run(args: argparse.Namespace, output_dir: Path) -> int:
             progress_every=args.progress_every,
             reference=reference,
             reference_ids=reference_ids,
+            per_layer_sink=spec.stage in C3_STAGES,
         )
         reference = result["reference"]
         reference_ids = result["reference_ids"]
@@ -2237,6 +2946,7 @@ def _run(args: argparse.Namespace, output_dir: Path) -> int:
             progress_every=args.progress_every,
             reference=reference,
             reference_ids=reference_ids,
+            per_layer_sink=spec.stage in C3_STAGES,
         )
         split_results["test"] = test_result
     else:
@@ -2323,6 +3033,9 @@ def _run(args: argparse.Namespace, output_dir: Path) -> int:
             **fresh_corpus_checks,
             **sink_checks,
             **attribution_checks,
+            **({"first_order_direction_pass": first_order_guard[
+                "first_order_direction_pass"
+            ]} if first_order_guard else {}),
             "full_condition_grid_pass": len(conditions) == 126,
             "all_identity_exact_pass": all_identity_pass,
             "all_forward_validity_pass": all_validity_pass,

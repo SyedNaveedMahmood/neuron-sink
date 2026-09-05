@@ -283,3 +283,164 @@ implementation's mean over token positions; the future-layer fraction converts e
 causal future-sink objective to the registered all-sink-layer average. This check predicts only
 the aggregate change: the saved attribution averaged a source layer's future attention targets,
 so it cannot identify individual downstream attention-layer contributions.
+
+---
+
+## A007 - Stage C3 reachability-aware, direction-aware, measurement-based localization
+
+- **Date registered:** 2026-09-05
+- **Registered before:** constructing any Stage-C3 corpus, and before any Stage-C3 model forward
+- **Status:** active; defines a new experiment. It does **not** supersede, repair, or reinterpret
+  Stage C, and it does not depend on the outcome of the still-running Stage C2.
+
+### Motivation and status of the prior results
+
+Stage C is a completed, valid model-specific null under its registered absolute
+activation-times-gradient ranking. Amendment A005 already identified one defect in it: 18 of the 23
+neurons in its smallest target set had negative `mean_signed_attr`, so suppression was predicted -
+and observed - to *increase* the sink.
+
+A per-sink-layer decomposition of the completed Stage-C test result identifies a second, independent
+defect. At the 0.01% condition the measured relative sink reduction per registered sink layer was:
+
+| Sink layer | RSR | Weight in the graded metric | Contribution |
+|---:|---:|---:|---:|
+| 4 | 0.00% | 13.2% | 0.00 pp |
+| 6 | 0.00% | 13.4% | 0.00 pp |
+| 14 | 0.00% | 14.5% | 0.00 pp |
+| 23 | -2.92% | 15.5% | -0.45 pp |
+| 24 | -1.38% | 14.1% | -0.19 pp |
+| 25 | -0.48% | 15.6% | -0.07 pp |
+| 26 | -13.75% | 13.7% | -1.89 pp |
+
+These reconstruct the reported aggregate of -2.598% to within 0.012 pp, so the decomposition is
+consistent with the frozen result rather than a re-measurement of it.
+
+Layers 4, 6 and 14 moved by *exactly* zero because the selected neurons were concentrated in MLP
+layer 25, and a decoder block computes attention before its MLP: attention at layer `j <= l` is
+already fixed when layer `l`'s MLP runs. 41.1% of the graded metric was therefore not merely
+unmoved but causally unreachable by the selected set, at any sparsity and any alpha. Under global
+top-k selection this is not a tuning accident; it follows from comparing scores across depths that
+have different path lengths and different target sets.
+
+The two defects are separable and both must be fixed for the registered gate to be a fair test on
+this checkpoint. Fixing only the sign - Stage C2 - would at best flip layer 26 from -13.75% to
++13.75%, which is an aggregate of +1.9% against a 10% threshold.
+
+### What changed
+
+1. **Per-target-layer attribution.** `S_j` is differentiated separately for each reachable
+   sink-heavy attention layer `j > l` instead of once for their mean. The registered scalar is
+   unchanged and remains the mean of these terms; `neuron_sink/sink_metrics.py` exposes the terms
+   through `differentiable_sink_scores_per_layer`, and the identity `terms.mean() ==
+   differentiable_sink_score(...)` is pinned by test.
+2. **Per-sink-layer budgeted selection.** Each registered sink layer `j` receives a share of `k`
+   proportional to its weight in the graded metric, `w_j = S0_j / sum_j S0_j`, allocated by largest
+   remainder so the shares total exactly `k`. Each share is filled only from MLP layers `l < j`.
+   Fill order is ascending `j` - the earliest sink layer has the smallest upstream pool and so picks
+   first - neurons already taken are skipped, and any shortfall is redistributed from the global
+   measured order.
+3. **Strictly positive direction requirement**, inherited from A005's reasoning and applied per
+   target: a candidate must reduce the sink *at the layer it was drawn for*.
+4. **Measured-ablation rerank.** The gradient score only shortlists. The final ranking is the effect
+   directly measured under the registered intervention (`alpha=0`) on discovery examples only. A
+   first-order score around the current activation is not a reliable predictor of ablating that
+   activation to zero, and one ablated forward yields the sink at every registered layer at once, so
+   this is affordable.
+5. **float32 metric and attribution arithmetic.** The sink reduction and the
+   `activation * gradient` product are computed in float32 even when the registered forward is
+   bfloat16. `neuron_sink/evaluation.py` already does this for CE and KL. A bfloat16 reduction
+   returns a bfloat16 scalar, so at a sink of ~0.6 the metric carries a resolution of about 0.0023 -
+   the same order as an entire matched-random control effect in Stage C (its random-control 95th
+   percentile RSR values were ~2e-4). **The backward pass still runs in the registered dtype**; this
+   amendment recovers precision in the metric and the product, and does not claim to turn a bfloat16
+   backward into a float32 one.
+6. **Per-sink-layer reporting is mandatory.** Every Stage-C3 condition writes the sink at every
+   registered layer to `<stage>/suppression/per_layer_sink.csv`. The shared 41-column
+   `PHENOMENON_ROW_FIELDS` schema is *not* extended, so Stage B, C and C2 artefacts remain readable
+   by the existing loader.
+7. **A direction guard** runs before the intervention grid and aborts the run if any targeted
+   condition's own discovery measurements point the wrong way. The quantity checked is the sum of
+   the selected neurons' *measured* marginal sink reductions, which is a stronger check than the
+   first-order sign, and is still a sum of marginals rather than a claim about the joint effect.
+   The joint effect of the largest targeted set is measured separately and reported alongside the
+   sum of its marginals, so redundancy is stated rather than assumed.
+8. **Registered comparison arms.** Alongside the C3 primary arm, Stage C3 registers: the whole-MLP
+   layer-attenuation baseline from `docs/01_PHENOMENON_GATE.md` ("Layer-level baseline"), extended
+   with an all-eligible-layers condition; the Stage-C absolute-ranked arm and the Stage-C2
+   signed-only arm re-run on the same fresh blocks at `alpha=0`, so an improvement can be
+   attributed to the ranking change rather than to the change of corpus; and GPT-2-small as a
+   method-validation control, because it is a checkpoint already known to pass and a method that
+   cannot reproduce its Stage-B effect is at fault.
+
+   **These attenuation conditions are maximal interventions, not upper bounds.** Suppression is not
+   monotone in the sink - Stage C is itself a case where suppressing neurons *increased* it - so a
+   sparse subset can exceed a whole-layer or all-layer effect, and a set spanning several MLP layers
+   can exceed any single layer. A dev check on GPT-2-small showed exactly that. The one rigorous
+   bound in this design is causal reachability: a set drawn from MLP layers `L` cannot move any sink
+   layer `j <= min(L)`, so its achievable relative reduction is at most the baseline sink mass of
+   the reachable layers over the total. That arithmetic bound is what identified the 41.1%
+   unreachable share above, and it is recorded per condition as `reachable_metric_weight`.
+
+### Corpus windows
+
+Stage C used the pinned provider's `sink` window (global blocks 0-299) and Stage C2 uses its `ppl`
+window (300-599). The provider exposes only those two offsets, but `purpose="ppl"` has no cap on
+`n_blocks`, so requesting 600 blocks and dropping the first 300 reaches blocks **600-899**. Packing
+is a prefix operation, so the dropped prefix is byte-identical to the Stage-C2 corpus, and Stage C2
+remains exactly reproducible; this equality is asserted by test. Qwen Stage C3 therefore uses
+`openwebtext_validation_ppl_600_skip300`, blocks 600-899. GPT-2-small has only ever consumed the
+GPT-2-tokenized `sink` window, so its Stage-C3 corpus is `openwebtext_validation_ppl_300`, blocks
+300-599, with no skip. Both manifests are frozen and hash-pinned before any run, and the runner
+refuses to start against an unpinned manifest.
+
+Two superficially similar routes were considered and rejected, because both give **false**
+disjointness: a different `seed` reshuffles the same 8,000 validation documents, and
+`train_documents`/`validation_documents` change the document window without being encoded in the
+upstream corpus id.
+
+### What did not change
+
+- checkpoint and revision: `Qwen/Qwen2.5-1.5B-Instruct` at
+  `989aa7980e4cf806f80c7fef2b1adb7bc71aa306`, and `openai-community/gpt2` at
+  `607a30d783dfa663caf39e06633721c8d4cfcd7e`;
+- tokenizer/revision, bfloat16 forward dtype for Qwen and float32 for GPT-2, eager attention, the
+  RTX 4080 SUPER full-run role, and batch size 1;
+- the position-0 / second-half-query sink metric, its target position and query rule, and the
+  discovery-only sink-heavy-layer rule (top quartile and a 0.15 floor);
+- the causal-ordering constraint, the pre-`down_proj` / pre-`c_proj` neuron definition, and
+  all-position suppression;
+- registered fractions, the five alpha values, 20 layer-count-matched random controls, the control
+  RNG and its seed derivation, and the control re-derivation check;
+- the neutral CE/KL/top-1 metrics, the validation operating-point rule, the paired bootstrap, the
+  dose-response threshold, and **the formal held-out gate exactly as registered** - RSR >= 0.10 on
+  the mean over all sink-heavy layers, above the random 95th percentile, bootstrap lower bound above
+  zero, Spearman >= 0.8, valid outputs. Change 2 is what makes that metric reachable; the threshold
+  itself is untouched;
+- downstream benchmark data remain forbidden for discovery or selection, and Stage D remains blocked
+  unless a checkpoint clears an independent formal gate.
+
+### Why this is a valid new test rather than post-hoc gate tuning
+
+The failure condition is frozen before any Stage-C3 measurement, on blocks no Stage-C3 model has
+seen. The changes are motivated by two mechanical defects that are visible in the *already
+completed* Stage-C artefacts - a sign error and a causal-reachability error - not by any Stage-C3
+cell performing well. Neither the gate nor any threshold is relaxed; the gate metric is left
+identical so C3 stays directly comparable with Stage B, Stage C and Stage C2. The registered
+comparison arms exist precisely so that a positive C3 result can be attributed to a specific change
+rather than to the new corpus. A Stage-C3 null remains a null, and no further ranking, budget, or
+selection change may be made under this experiment id.
+
+If attenuating every eligible MLP layer at once barely moves a given sink layer, that is strong
+evidence - not proof, because suppression is not monotone - that the sink is not MLP-mediated at
+that depth. The registered response is to report exactly that, and to consider the
+attention-dimension extension already described in `docs/01_PHENOMENON_GATE.md` as a separate
+registered experiment, rather than to make a further change to Stage C3.
+
+### Correction to A002
+
+Amendment A002 records the Stage-C corpus source as `stas/openwebtext-10k`. That line is wrong. The
+pinned loader (`upstream/sink-kd/common/datasets_loader.py`, `OPENWEBTEXT_HF_PATH`) and all three
+frozen manifests record `Skylion007/openwebtext`, which is the dataset that was actually used.
+Amendments are append-only, so A002 is left as written and this note is the correction of record.
+The data, the manifests and their hashes are unaffected.

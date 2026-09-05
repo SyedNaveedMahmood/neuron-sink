@@ -176,6 +176,7 @@ def differentiable_sink_score(
     heads: Mapping[int, Sequence[int]] | Sequence[int] | None = None,
     *,
     target_pos: int = REGISTERED_TARGET_POSITION,
+    dtype: torch.dtype | None = None,
 ) -> torch.Tensor:
     """Differentiable sink scalar over ``layers``, returned as a 0-dim tensor.
 
@@ -195,7 +196,51 @@ def differentiable_sink_score(
     second-half query positions jointly -- identical to the mean over heads of this module's
     per-head means, because every head sees the same number of queries -- then mean over
     layers.
+
+    ``dtype`` optionally upcasts the attention tensors before reducing. The default ``None``
+    keeps the historical behaviour byte-for-byte, so Stage B and Stage C stay reproducible;
+    Stage C3 passes ``torch.float32`` under amendment A007.
     """
+
+    return _sink_score_terms(
+        attentions, layers, heads, target_pos=target_pos, dtype=dtype
+    ).mean()
+
+
+def differentiable_sink_scores_per_layer(
+    attentions: Sequence[Any],
+    layers: Sequence[int] | None = None,
+    heads: Mapping[int, Sequence[int]] | Sequence[int] | None = None,
+    *,
+    target_pos: int = REGISTERED_TARGET_POSITION,
+    dtype: torch.dtype | None = None,
+) -> torch.Tensor:
+    """The same sink statistic, kept per layer instead of averaged (amendment A007).
+
+    Returns a 1-D tensor of shape ``[len(layers)]`` in the caller's layer order, so
+    ``result.mean()`` is exactly :func:`differentiable_sink_score` and
+    ``result[i]`` is the sink at ``layers[i]``. Stage C3 needs the individual terms for two
+    reasons: to differentiate ``S_j`` per target attention layer rather than only their mean,
+    and to report which sink layers an intervention actually moved.
+
+    Splitting the aggregate is not a new metric. The registered scalar is the mean of these
+    terms and remains available unchanged; ``tests/test_stage_c3.py`` pins the identity.
+    """
+
+    return _sink_score_terms(
+        attentions, layers, heads, target_pos=target_pos, dtype=dtype
+    )
+
+
+def _sink_score_terms(
+    attentions: Sequence[Any],
+    layers: Sequence[int] | None,
+    heads: Mapping[int, Sequence[int]] | Sequence[int] | None,
+    *,
+    target_pos: int,
+    dtype: torch.dtype | None,
+) -> torch.Tensor:
+    """Per-layer sink terms as a 1-D tensor; the shared body of both public scorers."""
 
     normalised = _as_layer_head_seq_seq(attentions)
     seq_len = int(normalised[0].shape[-1])
@@ -219,8 +264,14 @@ def differentiable_sink_score(
         selected = _selected_heads(heads, layer, int(attention.shape[0]))
         if selected is not None:
             attention = attention[selected]
+        if dtype is not None:
+            # Reducing in the model dtype loses precision that the sink metric cannot
+            # afford under bfloat16: a 0.6-valued scalar has ~0.0023 resolution there, which
+            # is the same order as a whole matched-random control effect. evaluation.py
+            # already upcasts its CE/KL arithmetic for exactly this reason.
+            attention = attention.to(dtype)
         per_layer.append(attention[:, second_half_start:, target_pos].mean())
-    return torch.stack(per_layer).mean()
+    return torch.stack(per_layer)
 
 
 def layer_scores(layer_head_mean: np.ndarray) -> np.ndarray:

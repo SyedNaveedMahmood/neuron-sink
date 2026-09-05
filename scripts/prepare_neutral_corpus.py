@@ -88,6 +88,16 @@ def _parse_args() -> argparse.Namespace:
             "amendment A005 registers the disjoint 'ppl' window for Stage C2."
         ),
     )
+    parser.add_argument(
+        "--skip-blocks", type=int, default=0,
+        help=(
+            "Amendment A007: request pool_size + skip_blocks blocks from the pinned 'ppl' "
+            "window and drop the first skip_blocks, reaching a third disjoint window. "
+            "Stage C3 uses 300, which yields global block indices 600-899. Packing is a "
+            "prefix operation, so the dropped prefix is byte-identical to the Stage-C2 "
+            "corpus and that corpus stays reproducible."
+        ),
+    )
     parser.add_argument("--split-size", type=int, default=FULL_SPLIT_SIZE,
                         help="Examples per discovery/validation/test split (registered: 100).")
     parser.add_argument("--cache-dir", type=Path,
@@ -168,6 +178,7 @@ def main() -> int:
         seed=args.seed,
         pool_size=pool_size,
         purpose=args.purpose,
+        skip_blocks=args.skip_blocks,
         cache_root=block_cache,
         train_documents=args.train_documents,
         validation_documents=args.validation_documents,
@@ -216,6 +227,7 @@ def main() -> int:
             seed=args.seed,
             pool_size=pool_size,
             purpose=args.purpose,
+            skip_blocks=args.skip_blocks,
             cache_root=block_cache,
             train_documents=args.train_documents,
             validation_documents=args.validation_documents,
@@ -236,7 +248,12 @@ def main() -> int:
             unique_ids_pass,
             repeat_pass is not False,
             corpus.corpus_id
-            == f"openwebtext_validation_{args.purpose}_{pool_size}",
+            == (
+                f"openwebtext_validation_{args.purpose}_{pool_size}"
+                if not args.skip_blocks
+                else f"openwebtext_validation_{args.purpose}"
+                     f"_{pool_size + args.skip_blocks}_skip{args.skip_blocks}"
+            ),
         )
     )
 
